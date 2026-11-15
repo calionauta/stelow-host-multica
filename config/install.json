@@ -5,7 +5,6 @@
     {
       "id": "stelow",
       "kind": "chain",
-      "board": "build",
       "intent": "feature",
       "projects": "repo",
       "why": "one idea carried to shipped code; per repository because it edits code"

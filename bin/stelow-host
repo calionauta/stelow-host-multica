@@ -3,7 +3,7 @@
 
 Reads the host's opinion (config/columns.json), the pinned stelow stage model
 (stages.yaml, fetched at the ref in stelow.lock.json) and drives the Multica CLI
-to create skills, agents, one workflow and the project binding.
+to create skills, agents, the workflows and the project bindings.
 
     ./bin/stelow-host sync     # fetch + pin stages.yaml
     ./bin/stelow-host plan     # what would change (no writes)
@@ -636,37 +636,6 @@ def menu_block(board: dict) -> str:
     return "\n".join(lines)
 
 
-def loose_columns(board_name: str) -> tuple[list[dict], dict]:
-    """A board's columns with the track baked into the key and the label.
-
-    The key prefix is what makes one workflow able to hold several tracks: a
-    card's status says which shape it is walking, and no two tracks can collide
-    on `review`. The separator is an underscore because a tracker's status keys
-    only admit lowercase letters, digits and underscores.
-    """
-    board = load_board(board_name)
-    track = board_name
-    columns = []
-    for index, column in enumerate(board["columns"]):
-        key = f"{track}_{column['id']}"
-        following = board["columns"][index + 1]["id"] if index + 1 < len(board["columns"]) else None
-        columns.append({
-            "id": key,
-            "label": f"{board['project']}: {column['label']}",
-            "category": column.get("category", "started"),
-            "gate": bool(column.get("gate")),
-            "agent": None if column.get("gate") else board["runner"],
-            "stages": [],
-            "back_to": f"{track}_{column['back_to']}" if column.get("back_to") else None,
-            "next": f"{track}_{following}" if following else "done",
-            "instructions": column["instructions"] + (
-                "\n\n" + menu_block(board) if not column.get("gate") else ""
-            ),
-        })
-    agent = {"agent": board["runner"], "skills": [item["skill"] for item in board["menu"]]}
-    return columns, agent
-
-
 class IdMap(dict):
     """Stands in for an id it has not seen, so a check can compare steps on a
     workspace where that agent does not exist yet."""
@@ -1120,7 +1089,12 @@ def board_plan(host: dict, board: dict) -> dict:
         "intent": board["board"],
         "gates": board.get("gates") or "human",
         "project": board["project"],
-        "columns": [dict(column) for column in board["columns"]],
+        # The working column carries the menu. Without it the runner was told to
+        # "load exactly one skill from the menu" and given no menu: it only worked
+        # while the card happened to name its strategy.
+        "columns": [dict(column) if column.get("gate") else
+                    dict(column, instructions=column["instructions"] + "\n\n" + menu_block(board))
+                    for column in board["columns"]],
         "agents": [{"agent": board["runner"], "skills": skills}],
         "skills": skills,
         "_board": True,
@@ -1441,9 +1415,11 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             # in columns.json, which is why the first version of this check could
             # not see the card that sat in it for eight minutes.
             known = {str(group["id"]) for group in groups} | {"todo", "done", "cancelled"}
-            for track in load_install()["tracks"]:
-                if track["kind"] == "loose":
-                    known |= {column["id"] for column in loose_columns(track["board"])[0]}
+            # Lane status keys come from the board declaration. Asking the old
+            # prefixing helper answered `explore_bucket` while the live workflow uses
+            # `bucket`, so every lane card was invisible to this check.
+            for lane_plan in plans:
+                known |= {str(column["id"]) for column in lane_plan["columns"]}
             for issue in issues:
                 issue_id = str(issue.get("id") or "")
                 if not issue_id:
@@ -1800,10 +1776,8 @@ def ask_project(host: dict, args, fallback: str) -> str:
 def cmd_ask(host: dict, args, groups) -> int:
     """Put one question on a track, with the strategy already named.
 
-    The track is chosen by the status the card enters, which is the only way one
-    workflow can hold several shapes: `build` lands on `intake`, a loose track
-    lands on its `run` column, because a question asked through this command wants
-    an answer rather than a triage step.
+    A question asked through this command wants an answer, not a triage step, so
+    it lands in the lane's first column and names its strategy on the card.
     """
     track = str(args.board)
     entry = track_entry(track)
@@ -2092,7 +2066,7 @@ def main(argv: list[str]) -> int:
     apply_cmd.add_argument("--board", help="converge boards/<name>.json instead of the stage chain")
     apply_cmd.add_argument("--all", action="store_true", help="converge every project in config/projects.json")
     install_cmd = sub.add_parser(
-        "install", help="converge one workflow that carries the chain and every loose track", parents=[common])
+        "install", help="converge every declared workflow and bind each to its projects", parents=[common])
     install_cmd.add_argument("--check", action="store_true", help="verify the workflow and the projects, writing nothing")
     install_cmd.add_argument("--all-projects", dest="all_projects", action="store_true",
                              help="attach the workflow to every project, as one project per repository")

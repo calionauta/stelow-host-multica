@@ -4,6 +4,31 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.3] - 2026-11-15
+
+### Fixed
+
+- **The lane's working column carried no menu.** `build_steps` pushed the board's
+  column text as written, and the menu was only assembled by a helper the doctor
+  used. Live, `doing` was 733 characters ending in "load exactly one skill from the
+  menu" with no menu: it only worked because `ask` writes the strategy onto the
+  card. The plan now appends the menu, so a hand-typed card has one too.
+- **`doctor` could not see a lane card.** Its set of known statuses came from the
+  same helper, which prefixes keys (`explore_bucket`) while the live workflow uses
+  `bucket`. Every lane card was invisible to the stalled and queued checks.
+
+### Changed
+
+- `AGENTS.md` is now the install runbook — prerequisites, environment variables,
+  command order, what success and failure look like — plus the rules. `llms.txt`
+  indexes the same material for a reader that starts outside GitHub.
+- `apply`/`install` help no longer describe one workflow carrying every track, and
+  `docs/design.md` states that the intent changes the columns, not the workflow's
+  name.
+- `tests/run.py` now fails when a pushed step loses its skills block, when a board
+  file is not declared in `config/install.json`, and when two workflows claim the
+  same project.
+
 ## [0.3.2] - 2026-11-15
 
 ### Changed

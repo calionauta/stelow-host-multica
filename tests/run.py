@@ -412,6 +412,35 @@ class TestPlanShape(HostCase):
         self.assertNotIn("stelow-workflow-interface-contrast", plan["skills"])
 
 
+class TestSkillsAreNamedInTheStep(HostCase):
+    def steps(self, intent="feature"):
+        plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], intent, "human", "p")
+        return plan, HOST.build_steps(plan, self.host, HOST.IdMap({}), create=False)
+
+    def test_every_pushed_step_names_the_skills_it_runs(self):
+        # Catches: a column that describes its work for six hundred characters and
+        # never names the skill carrying the method, so the agent searches for it or
+        # improvises one. Dropping the skills block leaves valid prose and every other
+        # test green, because nothing else reads what the agent is handed.
+        plan, steps = self.steps()
+        by_key = {column["id"]: column["skills"] for column in plan["columns"]}
+        for step in steps:
+            key = step["status_key"]
+            if key not in by_key:
+                continue
+            self.assertTrue(by_key[key], key)
+            self.assertIn("## Skills this step runs", step["instructions"], key)
+            for skill in by_key[key]:
+                self.assertIn("`%s`" % skill, step["instructions"], key)
+
+    def test_a_gate_step_is_not_handed_the_writers_skills(self):
+        # Catches: giving the reviewer the author's skill list, which turns a
+        # cross-check into a repetition of the same instincts.
+        _, steps = self.steps()
+        gate = next(step for step in steps if step["status_key"] == "product_gate")
+        self.assertNotIn("stelow-workflow-shape-up", gate["instructions"])
+
+
 class TestApply(HostCase):
     def test_apply_then_reapply_creates_nothing(self):
         """Re-running apply must converge, not duplicate agents and workflows."""
@@ -1097,6 +1126,27 @@ class TestInstall(HostCase):
         return scope
 
 
+class TestTheDeclarationAndItsBoards(HostCase):
+    def test_every_declared_lane_has_a_board_and_every_board_is_declared(self):
+        # Catches: a board file nobody installs (dead weight that still passes
+        # `board`), and a declaration with no board, which fails at apply time on a
+        # reader's workspace instead of in review.
+        declared = {workflow["board"] for workflow in HOST.load_install()["workflows"] if workflow.get("board")}
+        files = {path.stem for path in (self.tmp / "boards").glob("*.json")}
+        self.assertEqual(declared, files)
+
+    def test_each_workflow_owns_one_project_and_the_chain_takes_the_repositories(self):
+        # Catches: the chain and a lane pointing at the same project, which is how the
+        # Explore project came to run the eighteen-stage build flow.
+        workflows = HOST.load_install()["workflows"]
+        chain = [workflow for workflow in workflows if workflow["kind"] == "chain"]
+        self.assertEqual(len(chain), 1)
+        self.assertEqual(chain[0].get("projects"), "repo")
+        lanes = [workflow for workflow in workflows if workflow["kind"] == "loose"]
+        self.assertEqual(sorted(workflow["project"] for workflow in lanes), ["Explore", "Research"])
+        self.assertEqual(len({workflow["project"] for workflow in lanes}), len(lanes))
+
+
 class TestWhatACardKept(HostCase):
     def seed(self, status, description, attachments):
         self.fake.state.setdefault("issues", {})["i1"] = {
@@ -1301,8 +1351,9 @@ class TestTheBriefCarriesItsMenu(unittest.TestCase):
         # Catches: a step that says "pick from the menu" while the menu lives only
         # in the repository, which leaves the runner to guess or to search the
         # filesystem for it. Both happened on a canary card.
-        columns, agent = HOST.loose_columns("research")
-        run = next(column for column in columns if not column["gate"])
+        board = HOST.load_board("research")
+        plan = HOST.board_plan(HOST.load_host(HOST.ROOT / "config" / "host.json"), board)
+        run = next(column for column in plan["columns"] if not column["gate"])
         board = HOST.load_board("research")
         self.assertEqual(len(board["menu"]), 21)
         for item in board["menu"]:

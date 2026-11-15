@@ -1,0 +1,54 @@
+# stelow-host-multica
+
+> Provision [stelow](https://github.com/calionauta/stelow) onto a
+> [Multica](https://multica.ai) workspace with the `multica` CLI: three
+> workflows (build, explore, research), the agents that run them, and exactly
+> the skills each agent needs. A provisioner, not a plugin — no runtime, no
+> daemon, no UI.
+
+## Start here
+
+- [AGENTS.md](AGENTS.md) — the install runbook (prerequisites, command order,
+  what success and failure look like), the commands, and the rules that keep
+  this repository honest.
+- [README.md](README.md) — what it does, why three workflows, and what has been
+  verified live.
+- [docs/boards.md](docs/boards.md) — lanes: what a lane is, which lane a card is
+  on, how to add a skill or a fourth lane.
+- [docs/host-contract.md](docs/host-contract.md) — the upstream contract this
+  repository implements.
+- [docs/operations.md](docs/operations.md) — running it on a live workspace and
+  what a failed run looks like.
+
+## The shortest correct path
+
+```bash
+export MULTICA_WORKSPACE_ID=<id> MULTICA_RUNTIME_ID=<id>
+python3 bin/stelow-host sync
+python3 bin/stelow-host board
+python3 bin/stelow-host plan --all-workflows
+python3 bin/stelow-host install --check
+python3 bin/stelow-host install
+python3 bin/stelow-host verify --all-workflows
+```
+
+## What is where
+
+- `config/install.json` — the three workflows and the projects they bind to.
+- `config/columns.json` — the chain: stage groups → columns → agents + support skills.
+- `boards/explore.json`, `boards/research.json` — the lanes and their skill menus.
+- `agents/*.md` — agent identity plus the Multica/state adapter.
+- `stages/columns.md` — what each chain column asks of its handler.
+- `bin/stelow-host` — the provisioner (`sync`, `plan`, `apply`, `install`, `ask`,
+  `board`, `verify`, `status`, `card`, `doctor`).
+- `tests/run.py` — the suite; no network.
+
+## Non-negotiables
+
+- The stage list, intent routes and stage→skill ownership come from the pinned
+  stelow release (`stages.yaml`, `stage-catalog.json`), never from this repo.
+- Every step names the skills it runs; a step that does not makes the agent
+  improvise.
+- `plan` before `apply`. No dependencies: python3 stdlib plus the `multica`
+  binary.
+- English only.

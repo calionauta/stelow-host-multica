@@ -43,20 +43,25 @@ run instead of being silently dropped, and a column's `label` must slugify to
 its `id`, because Multica derives the status key from the label at create time
 and later updates address the key.
 
-## Intent: one workflow per route
+## Intent: one chain, four routes
 
 `--intent` selects which of `stages.yaml#routes.intents` to provision. The
 stage list is read from the pinned file, never copied here, so a stelow release
 that adds a stage cannot silently fall through:
 
-| intent | columns | workflow name |
-|---|---|---|
-| `new-product`, `feature` | 11 | `stelow-feature[-human]` |
-| `bugfix` | 6 | `stelow-bugfix[-human]` |
-| `refactor` | 7 | `stelow-refactor[-human]` |
-| `investigate` | 3 | `stelow-investigate[-human]` |
+| intent | columns |
+|---|---|
+| `new-product`, `feature` | 11 |
+| `bugfix` | 6 |
+| `refactor` | 7 |
+| `investigate` | 3 |
 
-`-human` appears only with `--gates human`.
+The workflow's name does not change with the intent. It used to
+(`stelow-feature-human`, `stelow-bugfix-agent`, ...), which read as one workflow
+per route; but a tracker binds one workflow per project, and two projects with
+different intents are two projects, not two workflows in one board. Applying a
+different intent replaces the chain in place, which is what "this repository
+runs the bugfix chain for now" means.
 
 ## What this host loses, on purpose
 
