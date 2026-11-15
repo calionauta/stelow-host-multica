@@ -5,23 +5,65 @@
   "workflow": "stelow-explore",
   "project": "Explore",
   "gates": "human",
-  "runner": "stelow-explore-runner",
+  "runner": "explore-runner",
   "skill_prefix": "stelow-workflow-",
   "menu": [
-    {"skill": "stelow-workflow-codebase-critique", "when": "a part of a codebase needs judging before anyone builds on it"},
-    {"skill": "stelow-workflow-plan-critique", "when": "a plan or proposal exists and needs to be attacked before it is spent"},
-    {"skill": "stelow-workflow-execution-critique", "when": "a diff or branch needs reviewing as work, not as style"},
-    {"skill": "stelow-workflow-ux-critique", "when": "a screen or flow needs to be read the way a user would"},
-    {"skill": "stelow-workflow-architecture-contrast", "when": "two existing architecture choices need comparing on evidence"},
-    {"skill": "stelow-workflow-architecture-alternatives", "when": "the shape of a system is still open and options need naming"},
-    {"skill": "stelow-workflow-interface-contrast", "when": "two existing interface options need comparing on evidence"},
-    {"skill": "stelow-workflow-interface-alternatives", "when": "an interface is still open and must not be guessed"},
-    {"skill": "stelow-workflow-shape-up", "when": "a shaped pitch is needed: appetite, boundary, rabbit holes"},
-    {"skill": "stelow-workflow-tech-planning", "when": "an approved design needs a technical plan someone can execute"},
-    {"skill": "stelow-workflow-scope-executor", "when": "one scoped slice should be executed end to end, without the chain"},
-    {"skill": "stelow-workflow-testing-ai-code", "when": "AI-written code needs a test plan that catches real defects"},
-    {"skill": "stelow-workflow-testing-execution", "when": "tests exist or were just written and need to be run, not assumed"},
-    {"skill": "stelow-workflow-coding-standards", "when": "new code needs to be held against this project's standards"}
+    {
+      "skill": "stelow-workflow-codebase-critique",
+      "when": "a part of a codebase needs judging before anyone builds on it"
+    },
+    {
+      "skill": "stelow-workflow-plan-critique",
+      "when": "a plan or proposal exists and needs to be attacked before it is spent"
+    },
+    {
+      "skill": "stelow-workflow-execution-critique",
+      "when": "a diff or branch needs reviewing as work, not as style"
+    },
+    {
+      "skill": "stelow-workflow-ux-critique",
+      "when": "a screen or flow needs to be read the way a user would"
+    },
+    {
+      "skill": "stelow-workflow-architecture-contrast",
+      "when": "two existing architecture choices need comparing on evidence"
+    },
+    {
+      "skill": "stelow-workflow-architecture-alternatives",
+      "when": "the shape of a system is still open and options need naming"
+    },
+    {
+      "skill": "stelow-workflow-interface-contrast",
+      "when": "two existing interface options need comparing on evidence"
+    },
+    {
+      "skill": "stelow-workflow-interface-alternatives",
+      "when": "an interface is still open and must not be guessed"
+    },
+    {
+      "skill": "stelow-workflow-shape-up",
+      "when": "a shaped pitch is needed: appetite, boundary, rabbit holes"
+    },
+    {
+      "skill": "stelow-workflow-tech-planning",
+      "when": "an approved design needs a technical plan someone can execute"
+    },
+    {
+      "skill": "stelow-workflow-scope-executor",
+      "when": "one scoped slice should be executed end to end, without the chain"
+    },
+    {
+      "skill": "stelow-workflow-testing-ai-code",
+      "when": "AI-written code needs a test plan that catches real defects"
+    },
+    {
+      "skill": "stelow-workflow-testing-execution",
+      "when": "tests exist or were just written and need to be run, not assumed"
+    },
+    {
+      "skill": "stelow-workflow-coding-standards",
+      "when": "new code needs to be held against this project's standards"
+    }
   ],
   "columns": [
     {
@@ -37,7 +79,7 @@
       "label": "Run",
       "category": "started",
       "gate": false,
-      "agent": "stelow-explore-runner",
+      "agent": "explore-runner",
       "instructions": "Load exactly one skill from the menu and run it on what the card names. Say in one line which skill you picked and why it beats the neighbours in the menu, then do the work and attach the artifact the skill produces, under its own name.\n\nIf the card needs a second skill to answer, stop: park it, say in one line which cards it should become, and let a person split it. Two skills in one run produce two half-artifacts and no one can review either.\n\nRead what the card names before reading anything else; do not widen the scope to the whole repository, and do not fix anything you were not asked to judge."
     },
     {
@@ -50,5 +92,8 @@
       "instructions": "Read the artifact and answer one question: does it settle what the card asked? Approve it and the card closes. Send it back if the artifact answers a different question, cites nothing, or leaves the judgement to the reader; say which of those three in one line, because a send-back with no reason is a second round nobody learns from.\n\nThis column is a person's. While the card waits here it carries `needs-human` and one nudge, so a waiting card cannot be mistaken for a dead run."
     }
   ],
-  "policy": {"max_back_edges": 2, "max_idle_hours": 48}
+  "policy": {
+    "max_back_edges": 2,
+    "max_idle_hours": 48
+  }
 }

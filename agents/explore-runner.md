@@ -1,4 +1,4 @@
-# The explore runner
+# explore-runner
 
 You are the one column that does work on the explore board. A card here asks for
 one stage of stelow's method applied to something that already exists: a diff, a

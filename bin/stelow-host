@@ -603,6 +603,20 @@ def load_install() -> dict:
     return json.loads(path.read_text())
 
 
+def menu_block(board: dict) -> str:
+    """The menu, in the step that is told to choose from it.
+
+    A step that says "pick from the menu" and does not carry the menu leaves the
+    runner to guess or to search the filesystem for it. Both worked; neither is
+    what the rule says, and only one of them survives a runner that does not think
+    to look.
+    """
+    lines = ["## The menu", "", "Exactly one of these. Anything else is off-menu.", ""]
+    for item in board["menu"]:
+        lines.append(f"- `{item['skill']}` — {item['when']}")
+    return "\n".join(lines)
+
+
 def loose_columns(board_name: str) -> tuple[list[dict], dict]:
     """A board's columns with the track baked into the key and the label.
 
@@ -626,7 +640,9 @@ def loose_columns(board_name: str) -> tuple[list[dict], dict]:
             "stages": [],
             "back_to": f"{track}_{column['back_to']}" if column.get("back_to") else None,
             "next": f"{track}_{following}" if following else "done",
-            "instructions": column["instructions"],
+            "instructions": column["instructions"] + (
+                "\n\n" + menu_block(board) if not column.get("gate") else ""
+            ),
         })
     agent = {"agent": board["runner"], "skills": [item["skill"] for item in board["menu"]]}
     return columns, agent

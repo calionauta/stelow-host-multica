@@ -5,30 +5,93 @@
   "workflow": "stelow-research",
   "project": "Research",
   "gates": "human",
-  "runner": "stelow-research-runner",
+  "runner": "research-runner",
   "skill_prefix": "stelow-product-",
   "menu": [
-    {"skill": "stelow-product-discovery", "when": "the method itself needs choosing before any research starts"},
-    {"skill": "stelow-product-job-to-be-done", "when": "what a customer is trying to get done is still a guess"},
-    {"skill": "stelow-product-audience-market", "when": "the audience or the market segment needs naming precisely"},
-    {"skill": "stelow-product-multi-method-market-analysis", "when": "a market question needs more than one method to be answered"},
-    {"skill": "stelow-product-opportunity-mapping", "when": "the opportunities inside a problem space need ordering"},
-    {"skill": "stelow-product-solutions", "when": "a validated problem needs candidate solutions before one is chosen"},
-    {"skill": "stelow-product-scope-mapping", "when": "a chosen solution needs its boundary drawn"},
-    {"skill": "stelow-product-offer", "when": "what exactly is being sold needs to be made concrete"},
-    {"skill": "stelow-product-pricing", "when": "a price has to be chosen and defended with reasoning"},
-    {"skill": "stelow-product-paywall", "when": "what is free and what is paid needs a rule"},
-    {"skill": "stelow-product-promotions", "when": "a promotion has to earn its margin"},
-    {"skill": "stelow-product-business-models", "when": "how the product makes money is still open"},
-    {"skill": "stelow-product-viable-business", "when": "the numbers need to show a business that can stand"},
-    {"skill": "stelow-product-launch-validation", "when": "a launch needs a test that could actually fail"},
-    {"skill": "stelow-product-manual-process", "when": "delivering by hand first would teach more than building"},
-    {"skill": "stelow-product-health", "when": "the health of the product or the business needs a reading"},
-    {"skill": "stelow-product-trust-building", "when": "the product needs to be believed before it is bought"},
-    {"skill": "stelow-product-marketplace-playbook", "when": "the product is a marketplace and both sides need a plan"},
-    {"skill": "stelow-product-open-source", "when": "open source is on the table as strategy, not sentiment"},
-    {"skill": "stelow-product-ads", "when": "paid acquisition needs a plan with numbers"},
-    {"skill": "stelow-product-evolutionary-principles", "when": "a decision needs holding against how products actually survive"}
+    {
+      "skill": "stelow-product-discovery",
+      "when": "the method itself needs choosing before any research starts"
+    },
+    {
+      "skill": "stelow-product-job-to-be-done",
+      "when": "what a customer is trying to get done is still a guess"
+    },
+    {
+      "skill": "stelow-product-audience-market",
+      "when": "the audience or the market segment needs naming precisely"
+    },
+    {
+      "skill": "stelow-product-multi-method-market-analysis",
+      "when": "a market question needs more than one method to be answered"
+    },
+    {
+      "skill": "stelow-product-opportunity-mapping",
+      "when": "the opportunities inside a problem space need ordering"
+    },
+    {
+      "skill": "stelow-product-solutions",
+      "when": "a validated problem needs candidate solutions before one is chosen"
+    },
+    {
+      "skill": "stelow-product-scope-mapping",
+      "when": "a chosen solution needs its boundary drawn"
+    },
+    {
+      "skill": "stelow-product-offer",
+      "when": "what exactly is being sold needs to be made concrete"
+    },
+    {
+      "skill": "stelow-product-pricing",
+      "when": "a price has to be chosen and defended with reasoning"
+    },
+    {
+      "skill": "stelow-product-paywall",
+      "when": "what is free and what is paid needs a rule"
+    },
+    {
+      "skill": "stelow-product-promotions",
+      "when": "a promotion has to earn its margin"
+    },
+    {
+      "skill": "stelow-product-business-models",
+      "when": "how the product makes money is still open"
+    },
+    {
+      "skill": "stelow-product-viable-business",
+      "when": "the numbers need to show a business that can stand"
+    },
+    {
+      "skill": "stelow-product-launch-validation",
+      "when": "a launch needs a test that could actually fail"
+    },
+    {
+      "skill": "stelow-product-manual-process",
+      "when": "delivering by hand first would teach more than building"
+    },
+    {
+      "skill": "stelow-product-health",
+      "when": "the health of the product or the business needs a reading"
+    },
+    {
+      "skill": "stelow-product-trust-building",
+      "when": "the product needs to be believed before it is bought"
+    },
+    {
+      "skill": "stelow-product-marketplace-playbook",
+      "when": "the product is a marketplace and both sides need a plan"
+    },
+    {
+      "skill": "stelow-product-open-source",
+      "when": "open source is on the table as strategy, not sentiment"
+    },
+    {
+      "skill": "stelow-product-ads",
+      "when": "paid acquisition needs a plan with numbers"
+    },
+    {
+      "skill": "stelow-product-evolutionary-principles",
+      "when": "a decision needs holding against how products actually survive"
+    }
   ],
   "columns": [
     {
@@ -44,7 +107,7 @@
       "label": "Run",
       "category": "started",
       "gate": false,
-      "agent": "stelow-research-runner",
+      "agent": "research-runner",
       "instructions": "Load exactly one skill from the menu and produce its artifact for the decision the card names. Say in one line which skill you picked and why, then satisfy the criteria the skill declares: its reference and contract say what the artifact must contain, and a claim with no source is a gap, not a sentence.\n\nWhere the card is missing evidence, say so in the artifact rather than inventing it. A research artifact that states its unknowns is usable; one that fills them with plausible prose is worse than nothing, because someone will act on it.\n\nIf the card needs a second skill to answer, stop: park it, name the cards it should become, and let a person split it."
     },
     {
@@ -57,5 +120,8 @@
       "instructions": "Read the artifact and answer one question: could someone act on this, and would they be right to? Send it back if a recommendation rests on a claim with no source, if the criteria the skill declares are not met, or if it recommends without naming what would prove it wrong; say which of those three in one line.\n\nThis column is a person's. While the card waits here it carries `needs-human` and one nudge, so a waiting card cannot be mistaken for a dead run."
     }
   ],
-  "policy": {"max_back_edges": 2, "max_idle_hours": 48}
+  "policy": {
+    "max_back_edges": 2,
+    "max_idle_hours": 48
+  }
 }

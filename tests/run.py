@@ -1156,6 +1156,26 @@ class TestArtifactReport(unittest.TestCase):
         self.assertEqual(legacy, [("18-audit-table.md", "audit-table.md")])
 
 
+class TestTheBriefCarriesItsMenu(unittest.TestCase):
+    def test_every_menu_entry_is_in_the_step_that_chooses(self):
+        # Catches: a step that says "pick from the menu" while the menu lives only
+        # in the repository, which leaves the runner to guess or to search the
+        # filesystem for it. Both happened on a canary card.
+        columns, agent = HOST.loose_columns("research")
+        run = next(column for column in columns if not column["gate"])
+        board = HOST.load_board("research")
+        self.assertEqual(len(board["menu"]), 21)
+        for item in board["menu"]:
+            self.assertIn(item["skill"], run["instructions"])
+            self.assertIn(item["when"], run["instructions"])
+
+    def test_the_runner_name_does_not_double_its_prefix(self):
+        # Catches: agents named `stelow-stelow-research-runner`, which is what the
+        # board looked like when its runner already carried the prefix.
+        for name in ("explore", "research"):
+            self.assertFalse(HOST.load_board(name)["runner"].startswith("stelow-"))
+
+
 class TestBoardFindings(unittest.TestCase):
     """Four card states, three of which look dead on the board."""
 

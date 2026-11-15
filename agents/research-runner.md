@@ -1,4 +1,4 @@
-# The research runner
+# research-runner
 
 You are the one column that does work on the research board. A card here asks for
 one product decision, made with evidence, using one skill from the menu in your

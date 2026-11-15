@@ -4,6 +4,32 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.2.1] - 2026-11-15
+
+Three findings from the canary card that proved the tracks (CAL-54), none of which
+the declaration could see.
+
+### Fixed
+
+- **The step that says "pick from the menu" now carries the menu.** The menu lived
+  only in `boards/<name>.json`, so the runner had to search the filesystem for it —
+  which it did, and reported that it had, and named the divergence: twenty-one
+  skills on the agent, eight in the brief, and the one the card named missing from
+  both lists. `menu_block` renders every `skill` with its `when` into the step, so
+  the rule and the brief are the same object.
+
+- **Agent names no longer double their prefix.** Boards named their runner
+  `stelow-research-runner`, which `agent_name` prefixed again into
+  `stelow-stelow-research-runner`. The boards name `research-runner` now, the two
+  stale agents are archived, and `board` refuses a runner that already carries the
+  prefix.
+
+### Removed
+
+- The three pre-consolidation workflows in the live workspace, which had no
+  projects attached and whose status keys invited a provisioning script to
+  re-adopt the old shape.
+
 ## [0.2.0] - 2026-11-15
 
 **Breaking, deliberately.** Three projects named Build/Explore/Research was the
