@@ -4,6 +4,18 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.4] - 2026-11-15
+
+### Added
+
+- **A run that has been "running" too long is now visible.** A tracker reports a run
+  as running until something ends it, so a run whose process died looks exactly like
+  a slow one: the card holds a run, has no comment and no marker, and every check
+  called it healthy. `doctor` now compares each active run's `started_at` against
+  `policy.max_run_minutes` (90 by default) and, with `--fix`, marks the card and
+  re-arms it. This is the third shape of the same failure: a card that waits with
+  nothing saying so.
+
 ## [0.3.3] - 2026-11-15
 
 ### Fixed

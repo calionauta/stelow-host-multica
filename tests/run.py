@@ -18,6 +18,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -1027,6 +1028,26 @@ class TestStalledCards(unittest.TestCase):
         now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
         issues = [{"key": "CAL-4", "id": "CAL-4", "status": "run"}]
         self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now), [])
+
+
+class TestZombieRuns(unittest.TestCase):
+    """A run whose process died is reported as running, so nothing notices."""
+
+    def test_a_run_running_past_the_limit_is_named_with_its_age(self):
+        # Catches: the canary card that held a "running" run for half an hour
+        # while every check called the board healthy.
+        now = datetime(2026, 11, 15, 22, 0, tzinfo=timezone.utc)
+        issues = [{"id": "i1", "key": "CAL-1"}, {"id": "i2", "key": "CAL-2"}]
+        active = {"i1": "2026-11-15T21:00:00Z", "i2": "2026-11-15T21:50:00Z"}
+        self.assertEqual(HOST.zombie_runs(issues, active, 45, now), [("CAL-1", 60.0)])
+
+    def test_a_run_with_no_start_or_a_broken_one_is_skipped(self):
+        # Catches: a crash on the missing field a tracker leaves when a run is
+        # queued but has not started, which would take the whole board check down.
+        now = datetime(2026, 11, 15, 22, 0, tzinfo=timezone.utc)
+        issues = [{"id": "i1", "key": "CAL-1"}]
+        self.assertEqual(HOST.zombie_runs(issues, {"i1": ""}, 0, now), [])
+        self.assertEqual(HOST.zombie_runs(issues, {"i1": "not a date"}, 0, now), [])
 
 
 class TestWorkflowName(unittest.TestCase):

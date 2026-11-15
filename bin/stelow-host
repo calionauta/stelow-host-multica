@@ -1142,6 +1142,31 @@ def load_aliases() -> dict:
         return {}
 
 
+def zombie_runs(issues, active_start, minutes, now=None):
+    """Cards whose active run has been "running" longer than `minutes`.
+
+    A tracker reports a run as running until something ends it, so a run whose
+    process died looks exactly like a slow one: the card sits in an agent column,
+    holds a run, has no comment and no marker, and every other check calls it
+    healthy. One did, for half an hour, on a canary card — the same shape as the
+    card that waited seventeen minutes in a gate with nothing marking it.
+    """
+    now = now or datetime.now(timezone.utc)
+    keys = {str(issue.get("id")): str(issue.get("key") or issue.get("id")) for issue in issues}
+    stale = []
+    for issue_id, started in active_start.items():
+        if not started:
+            continue
+        try:
+            began = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        age = (now - began).total_seconds() / 60.0
+        if age > minutes:
+            stale.append((keys.get(issue_id, str(issue_id)), round(age, 1)))
+    return sorted(stale, key=lambda row: -row[1])
+
+
 def stalled_cards(issues, known, hours, now=None):
     """Cards that have not moved in `hours`.
 
@@ -1408,7 +1433,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             check("board readable", False, str(exc).splitlines()[0][:120])
             issues = None
         if issues is not None:
-            running, labels, spent = set(), {}, {}
+            running, labels, spent, active_start = set(), {}, {}, {}
             limit = int(load_policy().get("max_back_edges", 2))
             # `todo` is the entry status every workflow starts from and it has no
             # handler, so a card left there does nothing at all. It is not a group
@@ -1431,6 +1456,9 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     runs = []
                 if runs:
                     running.add(issue_id)
+                    started = min(str(run.get("started_at") or "") for run in runs)
+                    if started:
+                        active_start[issue_id] = started
                 try:
                     rows = rows_of(live.json(["issue", "label", "list", issue_id]), "issue label list")
                 except Fail:
@@ -1459,8 +1487,13 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             stalled = stalled_cards(issues, known, idle_limit)
             idle_detail = ", ".join(f"{key} ({status}, {hours}h)" for key, status, hours in stalled[:4])
             check(f"no card idle beyond {idle_limit:g}h", not stalled, idle_detail)
+            run_limit = float(load_policy().get("max_run_minutes", 45))
+            zombies = zombie_runs(issues, active_start, run_limit)
+            zombie_detail = ", ".join(f"{key} ({age:g} min)" for key, age in zombies[:4])
+            check(f"no run older than {run_limit:g} min", not zombies, zombie_detail)
             stale_idle = [key for key, _status, _hours in stalled]
             park = unmarked + [key for key in spent if key not in unmarked]
+            park += [key for key, _age in zombies if key not in park]
             park += [key for key in stale_idle if key not in park]
             if getattr(args, "fix", False):
                 by_key = {issue.get("key"): issue for issue in issues}

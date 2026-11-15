@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "Board columns. `stages` are stelow stage ids read from the pinned stages.yaml; `skills` lists only supporting skills \u2014 the skill that OWNS each stage comes from the pinned stage-catalog.json, never from this file. `agent` is one of plan/build/review for every column, gates included (used only with --gates agent).",
+  "_comment": "Board columns. `stages` are stelow stage ids read from the pinned stages.yaml; `skills` lists only supporting skills — the skill that OWNS each stage comes from the pinned stage-catalog.json, never from this file. `agent` is one of plan/build/review for every column, gates included (used only with --gates agent).",
   "groups": [
     {
       "id": "intake",
@@ -12,7 +12,7 @@
       ],
       "agent": "plan",
       "skills": [],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": []
     },
     {
@@ -31,7 +31,7 @@
         "stelow-product-opportunity-mapping",
         "stelow-workflow-codebase-critique"
       ],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "01-spec-product.md",
         "02-critique-report.md"
@@ -48,7 +48,7 @@
       "back_to": "framing",
       "agent": "review",
       "skills": [],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "03-product-decision.md"
       ]
@@ -66,7 +66,7 @@
       "skills": [
         "stelow-workflow-interface-alternatives"
       ],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "04-scope-map.json",
         "05-interfaces.md",
@@ -88,7 +88,7 @@
       "back_to": "design",
       "agent": "review",
       "skills": [],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "10-interface-decision.md"
       ]
@@ -107,7 +107,7 @@
         "stelow-workflow-architecture-alternatives",
         "stelow-workflow-architecture-contrast"
       ],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "11-spec-tech.md",
         "12-decision.md",
@@ -125,7 +125,7 @@
       "back_to": "tech",
       "agent": "review",
       "skills": [],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "14-tech-decision.md"
       ]
@@ -143,7 +143,7 @@
         "stelow-workflow-coding-standards",
         "stelow-workflow-testing-ai-code"
       ],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "15-execution-report.md"
       ]
@@ -158,7 +158,7 @@
       "agent": "build",
       "back_to": "build",
       "skills": [],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "16-verification-report.md"
       ]
@@ -174,7 +174,7 @@
       "back_to": "build",
       "agent": "review",
       "skills": [],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "17-diff-review.md"
       ]
@@ -193,7 +193,7 @@
         "stelow-workflow-codebase-critique",
         "stelow-workflow-ux-critique"
       ],
-      "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)",
+      "_agent_note": "one of three: plan (triage→planning), build (execution+verification), review (gates+audit)",
       "artifacts": [
         "18-audit-table.md"
       ]
@@ -263,6 +263,7 @@
     "max_back_edges": 2,
     "_comment": "An audit that sends a card back more than this many times parks it for a person instead of opening another round: at that point the loop is deciding, not the reviewer.",
     "max_idle_hours": 48,
-    "stall_minutes": 5
+    "stall_minutes": 5,
+    "max_run_minutes": 90
   }
 }
