@@ -1475,8 +1475,12 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     if over:
                         spent[issue.get("key") or issue_id] = over
             unmarked, orphans, stale = board_findings(issues, gate_ids(groups), known, running, labels)
-            check("no gate card waits unmarked", not unmarked, "waiting on a person: " + ", ".join(unmarked[:4]))
-            check("no orphaned card", not orphans, "run ended, nothing queued: " + ", ".join(orphans[:4]))
+            # Only a failing check needs a sentence: printing "waiting on a person: "
+            # with nobody waiting reads as a warning that is not there.
+            check("no gate card waits unmarked", not unmarked,
+                  "waiting on a person: " + ", ".join(unmarked[:4]) if unmarked else "")
+            check("no orphaned card", not orphans,
+                  "run ended, nothing queued: " + ", ".join(orphans[:4]) if orphans else "")
             check("no stale waiting marker", not stale, ", ".join(stale[:4]))
             detail = "; ".join(
                 f"{key}: " + ", ".join(f"{src}→{dst} x{n}" for src, dst, n in pairs)

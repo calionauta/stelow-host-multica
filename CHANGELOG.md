@@ -4,6 +4,15 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.8] - 2026-11-15
+
+### Fixed
+
+- **A passing check printed a sentence about a card that was not there.**
+  `doctor` rendered `run ended, nothing queued: ` on a healthy board, because the
+  detail string was assembled before the list was known to be empty. A warning that
+  appears when nothing is wrong teaches people to skip the warnings.
+
 ## [0.3.7] - 2026-11-15
 
 ### Documentation
