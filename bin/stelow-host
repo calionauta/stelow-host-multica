@@ -807,6 +807,23 @@ def flow_gaps(plan: dict, edges: dict[str, dict[str, list[str]]], universe: dict
     return gaps
 
 
+def artifact_report(present, groups):
+    """Which declared artifacts a card is missing.
+
+    `present` is the set of filenames attached anywhere on the card. Pure, so the
+    answer can be tested without a workspace: a card is only reproducible from
+    itself if every stage left its files behind, and this is how a host finds out
+    that one did not.
+    """
+    declared, missing = [], []
+    for group in groups:
+        for name in group.get("artifacts") or []:
+            declared.append(name)
+            if name not in present:
+                missing.append((group["id"], name))
+    return declared, missing
+
+
 HUMAN_GATE_MARKER = "needs-human"
 WAITING_NUDGE = (
     "This card is parked for a human ruling. Check for an answer; if there is "
@@ -853,6 +870,28 @@ def board_findings(issues, gates, known, running, labels):
         elif active and marked:
             stale.append(key)
     return unmarked, orphans, stale
+
+
+def cmd_card(host: dict, args, groups) -> int:
+    """What a card kept, and where it stopped."""
+    live = Multica(host)
+    issue = Multica._one(live.json(["issue", "get", args.issue]), "issue get")
+    issue_id = str(issue.get("id") or args.issue)
+    status = str(issue.get("status") or "?")
+    present = set()
+    for comment in Multica._rows(live.json(["issue", "comment", "list", issue_id]), "issue comment list"):
+        for attachment in comment.get("attachments") or []:
+            name = str(attachment.get("filename") or "")
+            if name:
+                present.add(name)
+    declared, missing = artifact_report(present, groups)
+    say(f"{issue.get('key') or issue_id}  status: {status}")
+    say(f"declared: {len(declared)}   present: {len(declared) - len(missing)}   missing: {len(missing)}")
+    for group_id, name in missing:
+        say(f"  missing  {name}  ({group_id})")
+    if status != "done":
+        say(f"note: the card is not closed (status {status!r}), so missing files may still be owed")
+    return 1 if missing and status == "done" else 0
 
 
 def cmd_doctor(host: dict, args, groups, lock) -> int:
@@ -1198,6 +1237,8 @@ def main(argv: list[str]) -> int:
     sub.add_parser("apply", help="converge the workspace", parents=[common])
     sub.add_parser("verify", help="assert the live workspace matches the plan", parents=[common])
     sub.add_parser("status", help="compact live summary", parents=[common])
+    card = sub.add_parser("card", help="what a card kept, and where it stopped", parents=[common])
+    card.add_argument("issue", help="issue id or key")
     doctor = sub.add_parser("doctor", help="check the environment, the pin, stage ownership, and the board", parents=[common])
     doctor.add_argument("--fix", action="store_true", help="mark cards that wait on a person without saying so")
     args = parser.parse_args(argv)
@@ -1222,6 +1263,8 @@ def main(argv: list[str]) -> int:
             return cmd_verify(host, args, groups, lock)
         if args.command == "status":
             return cmd_status(host, args, groups, lock)
+        if args.command == "card":
+            return cmd_card(host, args, groups)
         if args.command == "doctor":
             return cmd_doctor(host, args, groups, lock)
         raise Fail(f"unknown command {args.command}")

@@ -4,6 +4,19 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.6] - 2026-11-15
+
+### Added
+
+- **`stelow-host card <issue>`**: what a card kept, and where it stopped. It reads
+  the card's attachments, compares them against the artifacts each column
+  declares, and lists what is missing. A closed card missing files exits
+  non-zero; an open card prints the gaps as owed rather than as failures.
+
+  On the smoke card it reports 2 of 18 present, because the first half of that
+  card ran before the naming rule existed. That is the point: the gap was
+  invisible until something counted it.
+
 ## [0.1.5] - 2026-11-15
 
 A card that waits on a person used to look exactly like a run that died. On the

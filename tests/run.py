@@ -798,6 +798,22 @@ class TestAskingLeavesATrace(unittest.TestCase):
         self.assertIn("Cite the spec's ids", md)
 
 
+class TestArtifactReport(unittest.TestCase):
+    def test_a_card_names_what_it_is_missing(self):
+        # Catches: a stage that produced nothing, on a card that closed anyway.
+        groups = [
+            {"id": "framing", "artifacts": ["01-spec-product.md", "02-critique-report.md"]},
+            {"id": "audit", "artifacts": ["18-audit-table.md"]},
+        ]
+        declared, missing = HOST.artifact_report({"01-spec-product.md", "18-audit-table.md"}, groups)
+        self.assertEqual(len(declared), 3)
+        self.assertEqual(missing, [("framing", "02-critique-report.md")])
+
+    def test_a_complete_card_misses_nothing(self):
+        groups = [{"id": "framing", "artifacts": ["01-spec-product.md"]}]
+        self.assertEqual(HOST.artifact_report({"01-spec-product.md"}, groups)[1], [])
+
+
 class TestBoardFindings(unittest.TestCase):
     """Four card states, three of which look dead on the board."""
 
