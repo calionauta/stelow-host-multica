@@ -17,7 +17,7 @@ workspace id is wrong they say so and `plan` falls back to the intended state.
 
 Check these three things after the first `apply`:
 
-1. `multica workflow get stelow-feature-human` — the step order and handlers are
+1. `multica workflow get stelow` — the step order and handlers are
    what `plan` said.
 2. `multica skill list` — the skills are there with the names stelow uses (the
    import name comes from `SKILL.md`, so it matches the directory).
@@ -52,7 +52,7 @@ Moving a live project onto the workflow needs the old statuses mapped:
 Or preview the server-side mapping first:
 
 ```bash
-multica project workflow set <project> stelow-feature-human --dry-run
+multica project workflow set <project> stelow --dry-run
 ```
 
 ## Rollback

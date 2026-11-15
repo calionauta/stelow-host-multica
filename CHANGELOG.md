@@ -4,6 +4,13 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.6] - 2026-11-15
+
+### Documentation
+
+- `docs/operations.md` named `stelow-feature-human` in two commands. That workflow
+  no longer exists: the chain is called `stelow`, and the intent changes its columns.
+
 ## [0.3.5] - 2026-11-15
 
 ### Fixed
