@@ -730,16 +730,39 @@ def cmd_sync(host: dict, args) -> int:
     return 0
 
 
-def cmd_plan(host: dict, args, groups, lock) -> int:
+def resolve_plan(host: dict, args, groups, lock) -> dict:
+    """The plan `plan` and `apply` share, whichever shape was asked for.
+
+    Both used to build it themselves, and the board flag was wired into one of
+    them: `apply --board` silently applied the chain instead. One resolver, so a
+    shape added later cannot be honoured by half the commands.
+    """
     board_spec = getattr(args, "board", None)
-    if board_spec:
-        board = load_board(board_spec)
-        problems = board_problems(board)
-        if problems:
-            raise Fail("board is not runnable: " + "; ".join(problems))
-        plan = board_plan(host, board)
-    else:
-        plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    if not board_spec:
+        return build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    board = load_board(board_spec)
+    problems = board_problems(board)
+    if problems:
+        raise Fail("board is not runnable: " + "; ".join(problems))
+    return board_plan(host, board)
+
+
+def render_board_plan(plan: dict) -> str:
+    """A board plan is a shape of columns and one menu, so render it as that."""
+    lines = [f"{plan['workflow']}  → project {plan['project']!r}  gates={plan['gates']}",
+             f"skills imported: {len(plan['skills'])}  runner: {plan['agents'][0]['agent']}"]
+    for column in plan["columns"]:
+        who = "a person" if column.get("gate") else plan["agents"][0]["agent"]
+        back = f"  back to {column['back_to']}" if column.get("back_to") else ""
+        lines.append(f"  {column['id']:<8} {column['label']:<10} {who}{back}")
+    return "\n".join(lines)
+
+
+def cmd_plan(host: dict, args, groups, lock) -> int:
+    plan = resolve_plan(host, args, groups, lock)
+    if plan.get("_board"):
+        say(json.dumps(plan, indent=2) if getattr(args, "json", False) else render_board_plan(plan))
+        return 0
     if args.json:
         say(json.dumps(plan, indent=2))
         return 0
@@ -1288,16 +1311,27 @@ def ensure_agent(multica: Multica, host: dict, agent: str, skills: list[str], sk
     return agent_id
 
 
-def project_exists(multica: Multica, title: str) -> bool:
+def resolve_project(multica: Multica, name: str) -> str:
+    """A project id from a title or an id prefix.
+
+    `project workflow set` takes an id, and a board names its project by title, so
+    the id has to be looked up rather than assumed. An empty answer is a project
+    that does not exist yet.
+    """
     try:
         rows = Multica._rows(multica.json(["project", "list"]), "project list")
     except Fail:
-        return False
-    return any(str(row.get("title") or row.get("name") or "") == title for row in rows)
+        return ""
+    for row in rows:
+        project_id = str(row.get("id") or "")
+        title = str(row.get("title") or row.get("name") or "")
+        if title == name or (project_id and project_id.startswith(name.lower())):
+            return project_id
+    return ""
 
 
 def cmd_apply(host: dict, args, groups, lock) -> int:
-    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    plan = resolve_plan(host, args, groups, lock)
     preflight(host)
     if not getattr(args, "offline", False):
         # Before the first write: a bad skill name would otherwise fail the run
@@ -1332,13 +1366,19 @@ def cmd_apply(host: dict, args, groups, lock) -> int:
         ])
         say(f"  + workflow {plan['workflow']}")
     if plan["project"]:
-        if plan.get("_board") and not project_exists(multica, plan["project"]):
+        project_ref = resolve_project(multica, plan["project"])
+        if not project_ref and plan.get("_board"):
             multica.run([
                 "project", "create", "--title", plan["project"],
                 "--description", f"stelow {plan['intent']} board: one card, one skill, one artifact",
             ])
             say(f"  + project {plan['project']}")
-        cmd = ["project", "workflow", "set", plan["project"], plan["workflow"]]
+            project_ref = resolve_project(multica, plan["project"])
+        if not project_ref:
+            raise Fail(
+                f"no project called {plan['project']!r} in this workspace: create it, or pass --project <id>"
+            )
+        cmd = ["project", "workflow", "set", project_ref, plan["workflow"]]
         if args.migrate:
             for old, new in (host.get("migrate") or {}).items():
                 if old.startswith("_") or not new:
@@ -1468,7 +1508,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--config", default=str(ROOT / "config" / "host.json"))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("sync", help="fetch and pin stages.yaml", parents=[common])
-    sub.add_parser("plan", help="show what would change", parents=[common])
+    plan_cmd = sub.add_parser("plan", help="show what would change", parents=[common])
+    plan_cmd.add_argument("--board", help="render boards/<name>.json instead of the stage chain")
     apply_cmd = sub.add_parser("apply", help="converge the workspace", parents=[common])
     apply_cmd.add_argument("--board", help="converge boards/<name>.json instead of the stage chain")
     board_cmd = sub.add_parser("board", help="check a board declaration without touching the workspace", parents=[common])

@@ -161,13 +161,18 @@ the receipt and advances, or parks the issue with a reason.
 - **Verified**: the stage/intent/catalog parser against the real
   `calionauta/stelow@main`; ownership and back-edges against the pinned
   `stage-catalog.json` and `transitions.md`; `doctor` end to end; the mapping,
-  convergence and gate wiring against an in-process fake of the CLI (78 tests,
+  convergence and gate wiring against an in-process fake of the CLI (80 tests,
   `python3 tests/run.py`).
 - **Not verified**: a board taken from `board` to `apply --board` and then run
   end to end on a live workspace. The chain is; the boards are new.
 - **Run against a live workspace** before trusting `apply` on yours: `doctor`,
   then `plan`, then `apply` on a fresh project. `docs/operations.md` lists what
   to check and what a failed run looks like.
+- **Boards, verified live**: both `boards/*.json` were converged against a real
+  workspace — 14 and 21 skills imported, two runner agents, two workflows (six
+  statuses each), two projects pointed at them. The chain keeps
+  `stelow-feature-human`; the boards are separate, so a research card never waits
+  behind eleven statuses.
 
 ## Related
 

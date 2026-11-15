@@ -4,6 +4,24 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.9] - 2026-11-15
+
+### Fixed
+
+- **`apply --board` applied the chain instead of the board.** The flag was wired
+  into `plan` only, so `apply --board explore` re-converged the 18-stage workflow
+  on the live project and said `intents=feature` while doing it. `plan` and
+  `apply` now share `resolve_plan`, and a test fails if the two disagree again.
+  Found by running it, which is the only way this class of bug shows up.
+
+- **A board's project is resolved from its title.** `project workflow set` takes
+  an id and a board names its project by title, so the first apply created the
+  project and then failed to point it at the workflow. `resolve_project` looks the
+  id up (title or id prefix) after creating it.
+
+- **`plan --board` renders as a board.** It went through the chain renderer and
+  died on `col["stages"]`, which a board column does not have.
+
 ## [0.1.8] - 2026-11-15
 
 ### Added

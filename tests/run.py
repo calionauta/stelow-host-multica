@@ -840,6 +840,24 @@ class TestBackEdgeBudget(unittest.TestCase):
         self.assertEqual(policy["max_back_edges"], 2)
 
 
+class TestThePlanResolver(unittest.TestCase):
+    def args(self, board=None):
+        return types.SimpleNamespace(board=board, intent="feature", gates="human", project="x")
+
+    def test_a_board_and_the_chain_cannot_disagree(self):
+        # Catches the bug this test exists for: `--board` was wired into `plan`
+        # only, so `apply --board explore` re-applied the 18-stage chain to the
+        # live project and said nothing.
+        plan = HOST.resolve_plan({}, self.args(board="explore"), [], {"intents": {}})
+        self.assertTrue(plan.get("_board"))
+        self.assertEqual(plan["workflow"], "stelow-explore")
+
+    def test_no_board_flag_still_builds_the_chain(self):
+        # Catches: the resolver swallowing the chain path.
+        with self.assertRaises(Exception):
+            HOST.resolve_plan({}, self.args(), [], {"intents": {}})
+
+
 class TestBoards(unittest.TestCase):
     def board(self, **overrides):
         board = {
