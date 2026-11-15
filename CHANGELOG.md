@@ -4,6 +4,21 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.2] - 2026-11-15
+
+### Fixed
+
+- **A network blip read as a missing skill.** `apply` fetches each `SKILL.md`
+  from the pinned upstream and treated *any* `OSError` as "not at the pinned
+  path", so one dropped connection refused the first write with a message naming
+  a skill that was perfectly fine. Transport errors now retry once and then say
+  what happened (`cannot reach ...`), and only a real `404` counts as missing.
+
+- **`MULTICA_BIN` did not exist.** The three ids could come from the
+  environment but the CLI path could not, which forced an absolute path into
+  `config/host.json` on every machine whose `multica` is not on `PATH`. The
+  errors that send you there now name the variable as well as the file.
+
 ## [0.1.1] - 2026-11-15
 
 The first end-to-end card found four things the contract left to chance.

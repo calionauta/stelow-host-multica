@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,7 +98,8 @@ def load_host(path: Path) -> dict:
             raise Fail(f"config/host.json is missing '{section}'")
     for key, var in (("workspace_id", "MULTICA_WORKSPACE_ID"),
                      ("runtime_id", "MULTICA_RUNTIME_ID"),
-                     ("project_id", "MULTICA_PROJECT_ID")):
+                     ("project_id", "MULTICA_PROJECT_ID"),
+                     ("bin", "MULTICA_BIN")):
         value = str(os.environ.get(var) or "").strip()
         if value:
             cfg["multica"][key] = value
@@ -135,21 +137,40 @@ def missing_upstream(host: dict, skills: list[str]) -> list[str]:
     missing: list[str] = []
     for skill in skills:
         url = f"https://raw.githubusercontent.com/{repo}/{ref}/{root}/{skill}/SKILL.md"
-        try:
-            with urllib.request.urlopen(url, timeout=20) as resp:  # noqa: S310 (pinned https host)
-                ok = resp.status == 200
-        except OSError:
-            ok = False
-        if not ok:
+        if upstream_status(url) != 200:
             missing.append(skill)
     return missing
+
+
+def upstream_status(url: str) -> int:
+    """200 or 404 from the pinned URL; a transport error is not a 404.
+
+    A dropped connection used to read as "this skill does not exist", so one
+    network blip blocked the first write with a message naming a skill that is
+    perfectly fine. Retry once, then say what actually happened.
+    """
+    last: object = None
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:  # noqa: S310 (pinned https host)
+                return resp.status
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                return 404
+            last = f"HTTP {err.code}"
+        except OSError as err:
+            last = err
+    raise Fail(f"cannot reach {url} ({last}): retry, or pass --offline to skip the upstream check")
 
 
 def preflight(host: dict) -> None:
     """Refuse to write with a half-filled config rather than half-provision a workspace."""
     missing = [key for key in ("workspace_id", "runtime_id") if not str(host["multica"].get(key) or "").strip()]
     if missing:
-        raise Fail("config/host.json: multica.%s must be set before apply" % ", multica.".join(missing))
+        raise Fail(
+            "multica.%s must be set before apply: export %s or fill config/host.json"
+            % (", multica.".join(missing),
+               " / ".join("MULTICA_" + key.upper() for key in missing)))
     if not str(host["stelow"].get("repo") or "").strip():
         raise Fail("config/host.json: stelow.repo must be set")
 
@@ -421,7 +442,7 @@ class Multica:
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         except FileNotFoundError:
-            raise Fail(f"Multica CLI not found: {self.bin!r} (set multica.bin in config/host.json)")
+            raise Fail(f"Multica CLI not found: {self.bin!r} (set MULTICA_BIN or multica.bin in config/host.json)")
         if proc.returncode != 0 and not can_fail:
             detail = (proc.stderr or proc.stdout or "").strip()
             raise Fail(f"FAILED: {' '.join(args)}\n{detail}", code=1)

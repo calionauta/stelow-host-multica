@@ -684,6 +684,56 @@ class TestStageInstructionGuards(unittest.TestCase):
         self.assertIn("interim line", self.adapter)
 
 
+class TestUpstreamCheck(unittest.TestCase):
+    def test_a_transport_error_is_not_a_missing_skill(self):
+        # Catches: a network blip reported as "not at the pinned path", which
+        # blocked apply on the live workspace and named a skill that was fine.
+        import urllib.request
+        from unittest import mock
+
+        with mock.patch.object(urllib.request, "urlopen", side_effect=OSError("timed out")):
+            with self.assertRaises(HOST.Fail) as caught:
+                HOST.upstream_status("https://example.invalid/SKILL.md")
+        self.assertIn("cannot reach", str(caught.exception))
+
+    def test_a_404_means_the_skill_is_missing(self):
+        import urllib.error
+        import urllib.request
+        from unittest import mock
+
+        not_found = urllib.error.HTTPError("https://x/SKILL.md", 404, "Not Found", {}, None)
+        with mock.patch.object(urllib.request, "urlopen", side_effect=not_found):
+            self.assertEqual(HOST.upstream_status("https://x/SKILL.md"), 404)
+
+
+class TestHostConfigEnvironment(unittest.TestCase):
+    def test_ids_and_bin_come_from_the_environment(self):
+        # Catches: losing an env override, which pushes a workspace's ids back
+        # into the committed config/host.json template.
+        import os
+
+        saved = {key: os.environ.get(key) for key in
+                 ("MULTICA_WORKSPACE_ID", "MULTICA_RUNTIME_ID", "MULTICA_PROJECT_ID", "MULTICA_BIN")}
+        os.environ.update({
+            "MULTICA_WORKSPACE_ID": "ws-from-env",
+            "MULTICA_RUNTIME_ID": "rt-from-env",
+            "MULTICA_PROJECT_ID": "pj-from-env",
+            "MULTICA_BIN": "/usr/local/bin/multica",
+        })
+        try:
+            cfg = HOST.load_host(REPO / "config" / "host.json")
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        self.assertEqual(cfg["multica"]["workspace_id"], "ws-from-env")
+        self.assertEqual(cfg["multica"]["runtime_id"], "rt-from-env")
+        self.assertEqual(cfg["multica"]["project_id"], "pj-from-env")
+        self.assertEqual(cfg["multica"]["bin"], "/usr/local/bin/multica")
+
+
 class TestRepositoryIsEnglish(unittest.TestCase):
     def test_no_portuguese_diacritics(self):
         # Catches: a Portuguese paragraph copied back in. The repository is
