@@ -4,6 +4,24 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.4.0] - 2026-11-15
+
+### Added
+
+- **A card that waits on a person is now handed to that person.** `stelow-host park
+  <issue>` adds `needs-human`, assigns the card to whoever opened it (falling back to
+  `config/host.json#human.member_id`), comments what is owed and re-arms the wakeup —
+  the four steps as one, because in practice they drifted apart.
+
+### Changed
+
+- `doctor` gained **"every waiting card is assigned to a person"**, and `--fix` now
+  assigns as well as labels. A `needs-human` marker with an agent as assignee reads as
+  "someone is on it" to every reader and every check.
+- `agents/_adapter.md` parking protocol now includes the assignment and the reason: on
+  CAL-57 the diff gate was reached with no marker and an owner that was still the agent
+  that wrote the code, so the person who asked was never told it was their turn.
+
 ## [0.3.9] - 2026-11-15
 
 ### Fixed

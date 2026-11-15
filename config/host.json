@@ -29,5 +29,9 @@
     "in_progress": "framing",
     "in_review": "verify",
     "blocked": "framing"
+  },
+  "human": {
+    "member_id": "",
+    "_comment": "Member who owns a parked card when an agent opened it. Usually empty: a card's creator is the owner."
   }
 }

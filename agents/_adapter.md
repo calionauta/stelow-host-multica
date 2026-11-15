@@ -136,9 +136,23 @@ while the person reading assumed the agent was still working. So when you park:
 
 ```
 multica issue label add <this issue> needs-human
+multica issue update <this issue> --assignee-id <the card's creator_id>
 multica issue wakeup create --after 45m \
   --instruction "Still parked: check for an answer. If there is none, say in one line what is owed and re-arm."
 ```
+
+`creator_id` is in `multica issue get <this issue> --output json` (assign it only
+when `creator_type` is `member`; if an agent opened the card, leave the assignee
+alone and say so in your one line). The label says what is happening; the assignee
+says who owes the answer. A card with the first and not the second stayed invisible
+on CAL-57 for twenty-five minutes: the person who asked had no notification and the
+assignee still pointed at the agent that wrote the code.
+
+```
+stelow-host park <issue> --why "one line on what is owed" --wake 45m
+```
+
+does the three steps in one command when you have this repository checked out.
 
 and say in one line who owes what. When the answer arrives, remove the label
 (`multica issue label remove <this issue> needs-human`) and carry on.

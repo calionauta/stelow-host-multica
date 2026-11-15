@@ -1254,6 +1254,28 @@ def gate_ids(groups) -> set[str]:
     return {str(group["id"]) for group in groups if group.get("gate")}
 
 
+def human_owner(issue: dict, host: dict) -> str:
+    """The member a parked card belongs to: whoever opened it, else the configured one.
+
+    The label says what is happening; the assignee says who owes the answer. A card
+    with the first and not the second is a card nobody is looking at — which is what
+    CAL-57 did at the diff gate: no marker and an owner that was still the agent
+    that wrote the code.
+    """
+    if str(issue.get("creator_type") or "") == "member" and issue.get("creator_id"):
+        return str(issue["creator_id"])
+    return str((host.get("human") or {}).get("member_id") or "")
+
+
+def assign_owner(live, issue: dict, host: dict) -> bool:
+    """Point the card at the person who owes the answer, if it is not already there."""
+    owner = human_owner(issue, host)
+    issue_id = str(issue.get("id") or "")
+    if not owner or not issue_id or str(issue.get("assignee_id") or "") == owner:
+        return False
+    return live.run(["issue", "update", issue_id, "--assignee-id", owner], can_fail=True) == 0
+
+
 def board_findings(issues, gates, known, running, labels):
     """Cards that are waiting invisibly.
 
@@ -1268,9 +1290,11 @@ def board_findings(issues, gates, known, running, labels):
     - a card in an agent column with no run and no marker is an orphan: its run
       ended and nothing will pick it up;
     - a marker on a card whose run is active is stale;
-    - a marker with no run in a gate column is the healthy waiting state.
+    - a marker with no run in a gate column is the healthy waiting state, but only
+      when a person owns it: the label says what is happening and the assignee says
+      who owes the answer.
     """
-    unmarked, orphans, stale = [], [], []
+    unmarked, unassigned, orphans, stale = [], [], [], []
     for issue in issues:
         issue_id = str(issue.get("id") or "")
         status = str(issue.get("status") or "")
@@ -1282,13 +1306,15 @@ def board_findings(issues, gates, known, running, labels):
         if status in gates:
             if not active and not marked:
                 unmarked.append(key)
-            elif active and marked:
+            if not active and str(issue.get("assignee_type") or "") != "member":
+                unassigned.append(key)
+            if active and marked:
                 stale.append(key)
         elif not active and not marked:
             orphans.append(key)
         elif active and marked:
             stale.append(key)
-    return unmarked, orphans, stale
+    return unmarked, unassigned, orphans, stale
 
 
 def lane_for_card(issue: dict, status: str, project_titles: dict[str, str]) -> dict | None:
@@ -1325,6 +1351,30 @@ def declared_strategy(issue: dict) -> str:
     """
     found = re.search(r"\*\*Strategy:\*\*\s*([A-Za-z0-9-]+)", str(issue.get("description") or ""))
     return found.group(1) if found else ""
+
+
+def cmd_park(host: dict, args) -> int:
+    """Mark a card as waiting on a person, and put it in front of that person.
+
+    One command instead of three, because the three drifted apart in practice: the
+    label was added, the wakeup was armed, and the assignee stayed on the agent that
+    asked the question.
+    """
+    live = Multica(host)
+    issue = Multica._one(live.json(["issue", "get", args.issue]), "issue get")
+    key = str(issue.get("key") or issue.get("id") or args.issue)
+    issue_id = str(issue.get("id") or args.issue)
+    live.run(["issue", "label", "add", issue_id, HUMAN_GATE_MARKER], can_fail=True)
+    assign_owner(live, issue, host)
+    if args.why:
+        live.run(["issue", "comment", "add", issue_id, "--content", args.why], can_fail=True)
+    if args.wake:
+        live.run(["issue", "wakeup", "create", issue_id, "--after", args.wake,
+                  "--instruction", WAITING_NUDGE], can_fail=True)
+    owner = human_owner(issue, host)
+    say(f"{key}  parked for {owner or 'nobody (set human.member_id in config/host.json)'}"
+        + (f", re-armed in {args.wake}" if args.wake else ""))
+    return 0 if owner else 1
 
 
 def cmd_card(host: dict, args, groups) -> int:
@@ -1490,11 +1540,14 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     over = back_edge_findings(events, groups, limit)
                     if over:
                         spent[issue.get("key") or issue_id] = over
-            unmarked, orphans, stale = board_findings(issues, gate_ids(groups), known, running, labels)
+            unmarked, unassigned, orphans, stale = board_findings(
+                issues, gate_ids(groups), known, running, labels)
             # Only a failing check needs a sentence: printing "waiting on a person: "
             # with nobody waiting reads as a warning that is not there.
             check("no gate card waits unmarked", not unmarked,
                   "waiting on a person: " + ", ".join(unmarked[:4]) if unmarked else "")
+            check("every waiting card is assigned to a person", not unassigned,
+                  "nobody owns: " + ", ".join(unassigned[:4]) if unassigned else "")
             check("no orphaned card", not orphans,
                   "run ended, nothing queued: " + ", ".join(orphans[:4]) if orphans else "")
             check("no stale waiting marker", not stale, ", ".join(stale[:4]))
@@ -1533,6 +1586,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     if not issue_id:
                         continue
                     live.run(["issue", "label", "add", issue_id, HUMAN_GATE_MARKER], can_fail=True)
+                    assign_owner(live, by_key.get(key) or {}, host)
                     live.run(["issue", "wakeup", "create", issue_id, "--after", "45m",
                               "--instruction", WAITING_NUDGE], can_fail=True)
                     marked += 1
@@ -2151,6 +2205,11 @@ def main(argv: list[str]) -> int:
     sub.add_parser("status", help="compact live summary", parents=[common])
     card = sub.add_parser("card", help="what a card kept, and where it stopped", parents=[common])
     card.add_argument("issue", help="issue id or key")
+    park = sub.add_parser("park", help="mark a card as waiting on a person, and assign it to them",
+                          parents=[common])
+    park.add_argument("issue", help="issue id or key")
+    park.add_argument("--why", default="", help="one line on what is owed, posted as a comment")
+    park.add_argument("--wake", default="", help="re-check after this delay, e.g. 45m")
     doctor = sub.add_parser("doctor", help="check the environment, the pin, stage ownership, and the board", parents=[common])
     doctor.add_argument("--fix", action="store_true", help="mark cards that wait on a person without saying so")
     args = parser.parse_args(argv)
@@ -2183,6 +2242,8 @@ def main(argv: list[str]) -> int:
             return cmd_ask(host, args, groups)
         if args.command == "card":
             return cmd_card(host, args, groups)
+        if args.command == "park":
+            return cmd_park(host, args)
         if args.command == "doctor":
             return cmd_doctor(host, args, groups, lock)
         raise Fail(f"unknown command {args.command}")

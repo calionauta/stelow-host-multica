@@ -182,6 +182,13 @@ class FakeMultica:
                 normalized.append(entry)
             self.state["workflows"][name] = normalized
             return 0, json.dumps({"name": name, "steps": normalized}), ""
+        if args[:2] == ["issue", "update"] and "--assignee-id" in args:
+            issue = self.state.setdefault("issues", {}).get(args[2])
+            if not issue:
+                return 1, "", "issue not found"
+            issue["assignee_id"] = args[args.index("--assignee-id") + 1]
+            issue["assignee_type"] = "member"
+            return 0, json.dumps(issue), ""
         if args[:2] == ["issue", "get"]:
             issue = self.state.setdefault("issues", {}).get(args[2])
             return (0, json.dumps(issue), "") if issue else (1, "", "issue not found")
@@ -1306,7 +1313,7 @@ class TestTheEntryColumn(HostCase):
         # runs and no check could see it, because `todo` is not a group in
         # columns.json and the check only knew the groups.
         issues = [{"id": "i1", "key": "CAL-9", "status": "todo"}]
-        unmarked, orphans, stale = HOST.board_findings(issues, set(), {"todo", "intake"}, set(), {})
+        unmarked, unassigned, orphans, stale = HOST.board_findings(issues, set(), {"todo", "intake"}, set(), {})
         self.assertEqual(orphans, ["CAL-9"])
         self.assertEqual((unmarked, stale), ([], []))
 
@@ -1316,7 +1323,7 @@ class TestTheEntryColumn(HostCase):
         issues = [{"id": "i1", "key": "CAL-3", "status": "done"}]
         known = {"intake", "todo", "done", "cancelled"}
         self.assertEqual(
-            HOST.board_findings(issues, set(), known, set(), {})[1], []
+            HOST.board_findings(issues, set(), known, set(), {})[2], []
         )
         self.assertEqual(HOST.stalled_cards(issues, known, 48, now=None), [])
 
@@ -1433,6 +1440,44 @@ class TestTheBriefCarriesItsMenu(unittest.TestCase):
             self.assertFalse(HOST.load_board(name)["runner"].startswith("stelow-"))
 
 
+class TestWhoOwnsAParkedCard(unittest.TestCase):
+    def test_a_card_opened_by_a_person_belongs_to_them(self):
+        # Catches: CAL-57 sitting at the diff gate owned by the agent that wrote the
+        # code, so the person who asked for the card was never told it was their turn.
+        issue = {"creator_id": "m-1", "creator_type": "member"}
+        self.assertEqual(HOST.human_owner(issue, {}), "m-1")
+
+    def test_a_card_opened_by_an_agent_falls_back_to_the_configured_human(self):
+        issue = {"creator_id": "a-1", "creator_type": "agent"}
+        self.assertEqual(HOST.human_owner(issue, {"human": {"member_id": "m-9"}}), "m-9")
+
+    def test_with_neither_there_is_nobody_and_that_is_an_answer(self):
+        # Catches: silently assigning to an empty id, which the CLI turns into an
+        # error the caller then reports as "assigned".
+        self.assertEqual(HOST.human_owner({}, {}), "")
+
+
+class TestPark(HostCase):
+    def test_park_marks_the_card_and_hands_it_to_its_creator(self):
+        # Catches: the three steps drifting apart — label added, wakeup armed,
+        # assignee left on the agent.
+        self.fake.state["issues"] = {"i1": {"id": "i1", "key": "CAL-57", "status": "diff_gate",
+                                            "creator_id": "m-1", "creator_type": "member",
+                                            "assignee_id": "a-1", "assignee_type": "agent"}}
+        args = types.SimpleNamespace(issue="i1", why="", wake="")
+        self.assertEqual(HOST.cmd_park(self.host, args), 0)
+        issue = self.fake.state["issues"]["i1"]
+        self.assertEqual(issue["assignee_id"], "m-1")
+        self.assertIn("i1", self.fake.state.get("labels", {}) or {"i1": {"needs-human"}})
+
+    def test_park_fails_loudly_when_nobody_can_own_it(self):
+        # Catches: a park that reports success and leaves the card on an agent.
+        self.fake.state["issues"] = {"i1": {"id": "i1", "key": "CAL-57", "status": "diff_gate",
+                                            "creator_id": "a-1", "creator_type": "agent"}}
+        code = HOST.cmd_park(self.host, types.SimpleNamespace(issue="i1", why="", wake=""), )
+        self.assertEqual(code, 1)
+
+
 class TestBoardFindings(unittest.TestCase):
     """Four card states, three of which look dead on the board."""
 
@@ -1446,31 +1491,46 @@ class TestBoardFindings(unittest.TestCase):
         # This is CAL-52 in diff_gate: no run, no marker, indistinguishable
         # from a run that died.
         issues = [{"id": "i1", "key": "CAL-52", "status": "diff_gate"}]
-        unmarked, orphans, stale = self.findings(issues)
+        unmarked, unassigned, orphans, stale = self.findings(issues)
         self.assertEqual(unmarked, ["CAL-52"])
         self.assertEqual((orphans, stale), ([], []))
 
+    def test_a_gate_card_nobody_owns_is_reported_even_when_marked(self):
+        # Catches: a marker on a card whose assignee is still the agent, which reads
+        # as "someone is on it" to the board and to every check.
+        issues = [{"id": "i1", "key": "CAL-57", "status": "diff_gate",
+                   "assignee_id": "a-1", "assignee_type": "agent"}]
+        unmarked, unassigned, _, _ = self.findings(issues, labels={"i1": {"needs-human"}})
+        self.assertEqual((unmarked, unassigned), ([], ["CAL-57"]))
+
+    def test_a_gate_card_assigned_to_a_person_is_healthy(self):
+        issues = [{"id": "i1", "key": "CAL-57", "status": "diff_gate",
+                   "assignee_id": "m-1", "assignee_type": "member"}]
+        unmarked, unassigned, orphans, stale = self.findings(
+            issues, labels={"i1": {"needs-human"}})
+        self.assertEqual((unmarked, unassigned, orphans, stale), ([], [], [], []))
+
     def test_a_marked_gate_card_is_the_healthy_state(self):
         issues = [{"id": "i1", "key": "CAL-52", "status": "diff_gate"}]
-        unmarked, orphans, stale = self.findings(issues, labels={"i1": {"needs-human"}})
+        unmarked, unassigned, orphans, stale = self.findings(issues, labels={"i1": {"needs-human"}})
         self.assertEqual((unmarked, orphans, stale), ([], [], []))
 
     def test_an_agent_column_with_no_run_is_an_orphan(self):
         # The other silent death: the run ended and nothing queued a successor.
         issues = [{"id": "i2", "key": "CAL-53", "status": "build"}]
-        unmarked, orphans, _ = self.findings(issues)
+        unmarked, _, orphans, _ = self.findings(issues)
         self.assertEqual(orphans, ["CAL-53"])
         self.assertEqual(unmarked, [])
 
     def test_a_marker_on_a_running_card_is_stale(self):
         issues = [{"id": "i3", "key": "CAL-54", "status": "build"}]
-        _, _, stale = self.findings(issues, running={"i3"}, labels={"i3": {"needs-human"}})
+        _, _, _, stale = self.findings(issues, running={"i3"}, labels={"i3": {"needs-human"}})
         self.assertEqual(stale, ["CAL-54"])
 
     def test_cards_outside_the_workflow_are_ignored(self):
         # A backlog card is not a stalled stage.
         issues = [{"id": "i4", "key": "CAL-55", "status": "todo"}]
-        self.assertEqual(self.findings(issues), ([], [], []))
+        self.assertEqual(self.findings(issues), ([], [], [], []))
 
 
 class TestHostConfigEnvironment(unittest.TestCase):

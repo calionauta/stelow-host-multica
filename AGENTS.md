@@ -53,6 +53,7 @@ python3 bin/stelow-host install [--check]       # every workflow + project bindi
 python3 bin/stelow-host verify --all-workflows  # exit 1 on drift
 python3 bin/stelow-host ask explore|research "<question>" [--skill NAME]
 python3 bin/stelow-host card <issue>            # what a card kept, and where it stopped
+python3 bin/stelow-host park <issue> --why "text"  # label, assignee and wakeup for a card that waits on a person
 python3 tests/run.py                            # the suite, no network
 ```
 
