@@ -46,3 +46,15 @@ in the gate column and post why — do not approve on someone else's behalf.
 Read the issue and its comments, do the stage work, post the outcome once, then
 move the issue. Do not narrate progress. If you cannot proceed, move the issue
 to its blocked step, or leave it where it is and post the blocker.
+
+## Missing input is not a rejection
+
+Send an issue back when the work you received is wrong against the stage's exit
+criteria — that is what the back edge is for.
+
+When the work is simply not there (no product spec to critique, no plan to
+implement, no way to produce the artifact from what the issue says), do **not**
+send it back. A back edge re-enters a stage that will fail the same way, so the
+card ping-pongs between two columns and burns a run per lap — observed on the
+first smoke run, twice in ninety seconds. Comment with the one question that
+unblocks you, leave the issue in its column, and stop. A person moves it.
