@@ -4,6 +4,9 @@ These rules are prepended to every agent's instructions. They are the host side
 of the stelow state contract: Multica owns some of the state, so you must not
 keep a second copy of it.
 
+There are three agents — `plan`, `build`, `review` — and the issue's status says
+which stage group is running, so nothing here needs to record position.
+
 ## What the board owns — never duplicate it
 
 - **Position.** The issue's status *is* the current stelow stage group. Never
@@ -32,12 +35,11 @@ timeline is the audit trail.
 
 ## Gates
 
-A gate column's handler is either the project lead (a person) or the
-gatekeeper agent. If you are the gatekeeper: read `review_mode` from
-`.stelow/state.md`; when the mode skips this gate, record the receipt in your
-comment and run the step's *done* command in the same turn. When the mode does
-not skip it, leave the issue in the gate column and post why — do not approve
-on someone else's behalf.
+A gate column's handler is either the project lead (a person) or the reviewer
+agent. If you are the reviewer: read `review_mode` from `.stelow/state.md`; when
+the mode skips this gate, record the receipt in your comment and run the step's
+*done* command in the same turn. When the mode does not skip it, leave the issue
+in the gate column and post why — do not approve on someone else's behalf.
 
 ## One turn, one outcome
 

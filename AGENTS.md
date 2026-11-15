@@ -8,18 +8,23 @@ Provision **stelow** onto a Multica workspace with the `multica` CLI.
 ## Commands
 
 ```bash
-python3 bin/stelow-host sync                # pin stages.yaml + stage-catalog.json
-python3 bin/stelow-host doctor              # env, pin, stage ownership
+python3 bin/stelow-host sync                # pin stages.yaml + catalog + transitions
+python3 bin/stelow-host doctor              # env, pin, ownership, back-edges
 python3 bin/stelow-host plan --intent X     # intended state; no writes
 python3 bin/stelow-host apply --intent X    # converge (idempotent)
+python3 bin/stelow-host apply --refresh-skills   # re-pull skills from the repo
 python3 bin/stelow-host verify              # exit 1 on drift
-python3 tests/run.py                        # the suite (27 tests, no network)
+python3 tests/run.py                        # the suite (30 tests, no network)
 ```
 
 `doctor --offline` skips the network and live-workspace checks.
 
 ## Rules
 
+- **Three agents: `plan`, `build`, `review`.** Stages that share an author share
+  an agent; only the gates get a separate one, because a gate is cross-checking
+  and a reviewer must not share the instincts of whoever produced the work. Do
+  not add a fourth agent without a reason that survives that sentence.
 - **Never copy the stage list, the intent routes, or the stage→skill ownership
   into this repo.** The first two come from the pinned `stages.yaml`, the third
   from the pinned `stage-catalog.json` (digests in `stelow.lock.json`). A stage
@@ -27,9 +32,12 @@ python3 tests/run.py                        # the suite (27 tests, no network)
 - **Never invent a status key.** A column's key must slugify from its `label`
   (Multica derives one from the other at create time; a mismatch breaks every
   later update). `load_groups` enforces this.
+- **Never invent a back-edge.** Where a rejected stage sends the run is in the
+  pinned `transitions.md`; `flow_gaps` compares the board against it.
 - **The column is the contract.** Column behavior lives in `stages/columns.md`
   and agent identity in `agents/`; do not describe stelow stages anywhere else.
 - Do not put host-specific policy into stelow skills — that is what
   `agents/_adapter.md` is for.
 - `plan` before `apply`. No dependency may be added: python3 stdlib + the
   `multica` binary only.
+- **English only**, in code, docs, commit messages and agent instructions.

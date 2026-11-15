@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -84,10 +85,22 @@ def say(msg: str = "") -> None:
 
 
 def load_host(path: Path) -> dict:
+    """Config file, with environment overrides for the three ids.
+
+    Ids are per-workspace, so keeping them out of a committed file is the normal
+    case: export MULTICA_WORKSPACE_ID / MULTICA_RUNTIME_ID / MULTICA_PROJECT_ID
+    and leave config/host.json as the template it is.
+    """
     cfg = read_json(path, "config/host.json")
     for section in ("stelow", "multica", "agents"):
         if section not in cfg:
             raise Fail(f"config/host.json is missing '{section}'")
+    for key, var in (("workspace_id", "MULTICA_WORKSPACE_ID"),
+                     ("runtime_id", "MULTICA_RUNTIME_ID"),
+                     ("project_id", "MULTICA_PROJECT_ID")):
+        value = str(os.environ.get(var) or "").strip()
+        if value:
+            cfg["multica"][key] = value
     return cfg
 
 
@@ -126,11 +139,10 @@ def load_groups(path: Path) -> list[dict]:
         stages = g.get("stages") or []
         if not stages:
             raise Fail(f"column {gid!r} lists no stages")
-        if g.get("gate"):
-            if g.get("agent"):
-                raise Fail(f"column {gid!r} is a gate and cannot also name an agent")
-        elif not g.get("agent"):
-            raise Fail(f"column {gid!r} is not a gate and must name an agent")
+        if not g.get("agent"):
+            # Gates name the reviewer too: it is the handler when the gate runs as
+            # an agent, and naming it keeps one mapping instead of two.
+            raise Fail(f"column {gid!r} must name an agent (plan, build or review)")
         for stage in stages:
             if stage in seen_stages:
                 raise Fail(f"stage {stage!r} is mapped by both {seen_stages[stage]!r} and {gid!r}")
@@ -505,17 +517,11 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
         for skill in col.get("skills") or []:
             if skill not in skills:
                 skills.append(skill)
-    gate_agent = None
-    if gates == "agent" and any(col.get("gate") for col in columns):
-        gate_agent = "gatekeeper"
-        for skill in ("stelow-workflow-orchestrator",):
-            if skill not in skills:
-                skills.append(skill)
-
     agents: list[dict] = []
     by_name: dict[str, dict] = {}
     for col in columns:
-        if col.get("gate"):
+        if col.get("gate") and gates != "agent":
+            # A person handles the gate, so no agent needs to load its skill.
             continue
         name = col["agent"]
         if name not in by_name:
@@ -527,8 +533,6 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
             # the stages it handles lose their owner and dispatch unguarded.
             if skill not in by_name[name]["skills"]:
                 by_name[name]["skills"].append(skill)
-    if gate_agent:
-        agents.append({"agent": gate_agent, "skills": ["stelow-workflow-orchestrator"]})
     return {
         "intent": intent,
         "gates": gates,
@@ -556,7 +560,7 @@ def build_steps(plan: dict, host: dict, agent_ids: dict[str, str], create: bool)
             if plan["gates"] == "human":
                 step["handler"] = {"type": "project_lead"}
             else:
-                step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, "gatekeeper")]}
+                step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, col["agent"])]}
         else:
             step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, col["agent"])]}
         step["instructions"] = col["instructions"]
@@ -594,8 +598,7 @@ def render_plan(plan: dict, host: dict, lock: dict, live_agents: dict[str, str],
         if col is None:
             lines.append(f"  {key:<16} —")
             continue
-        handler = "project_lead" if col["gate"] and plan["gates"] == "human" else (
-            agent_name(host, "gatekeeper") if col["gate"] else agent_name(host, col["agent"]))
+        handler = "project_lead" if col["gate"] and plan["gates"] == "human" else agent_name(host, col["agent"])
         gate = " · gate" if col["gate"] else ""
         nxt = chain[index + 1][0] if index + 1 < len(chain) else ""
         back = f"  back → {col['back_to']}" if col.get("back_to") else ""
@@ -646,20 +649,18 @@ def owner_gaps(plan: dict, owners: dict[str, str]) -> list[str]:
     that has never read the skill.
     """
     by_agent = {a["agent"]: set(a["skills"]) for a in plan["agents"]}
-    gatekeeper = by_agent.get("gatekeeper", set())
     gaps: list[str] = []
     for col in plan["columns"]:
         if col["gate"] and plan["gates"] != "agent":
             # A human handler reads the gate skill themselves; no agent to check.
             continue
-        skills = gatekeeper if col["gate"] else by_agent.get(col["agent"], set())
+        skills = by_agent.get(col["agent"], set())
         for stage in col["stages"]:
             owner = owners.get(stage)
             if not owner:
                 gaps.append(f"{col['id']}: stage {stage} has no owner in stage-catalog.json")
             elif owner not in skills:
-                where = "gatekeeper" if col["gate"] else col["agent"]
-                gaps.append(f"{col['id']}: stage {stage} is owned by {owner}, which agent {where} does not load")
+                gaps.append(f"{col['id']}: stage {stage} is owned by {owner}, which agent {col['agent']} does not load")
     return gaps
 
 
@@ -969,7 +970,7 @@ def main(argv: list[str]) -> int:
     common.add_argument("--intent", default=None,
                         help="intent route from stages.yaml (default: config default)")
     common.add_argument("--gates", choices=["human", "agent"], default=None,
-                        help="gate handler: the project lead (human) or the gatekeeper agent")
+                        help="gate handler: the project lead (human) or the review agent")
     common.add_argument("--project", default=None, help="Multica project id")
     common.add_argument("--json", action="store_true")
     common.add_argument("--refresh-skills", action="store_true", help="re-pull imported skills from their source")

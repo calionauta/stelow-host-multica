@@ -357,13 +357,13 @@ class TestApply(HostCase):
         for gate in ("product_gate", "interface_gate", "tech_gate", "diff_gate"):
             self.assertEqual(steps[gate]["handler"]["type"], "project_lead", gate)
 
-    def test_agent_gates_hand_the_step_to_the_gatekeeper(self):
+    def test_agent_gates_hand_the_step_to_the_reviewer(self):
         """Without this the --gates agent mode would leave gates to a stage agent."""
         self.apply(gates="agent")
-        gatekeeper = self.fp().state["agents"]["stelow-gatekeeper"]
+        reviewer = self.fp().state["agents"]["stelow-review"]
         steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow-feature"]}
         for gate in ("product_gate", "interface_gate", "tech_gate", "diff_gate"):
-            self.assertEqual(steps[gate]["handler"], {"type": "agent", "id": gatekeeper}, gate)
+            self.assertEqual(steps[gate]["handler"], {"type": "agent", "id": reviewer}, gate)
 
     def test_steps_chain_forward_and_back(self):
         """A broken forward chain strands the issue; a broken back edge loses rework."""
@@ -385,7 +385,11 @@ class TestApply(HostCase):
         instructions = [call[call.index("--instructions") + 1] for call in fake.calls
                         if call[:2] == ["agent", "create"]][0]
         self.assertIn("never duplicate it", instructions)
-        self.assertEqual(len(fake.state["agent_skills"]["stelow-build"]), 3)
+        # 3 agents, and each carries exactly the skills its own columns name.
+        self.assertEqual(sorted(fake.state["agents"]), ["stelow-build", "stelow-plan", "stelow-review"])
+        self.assertEqual(len(fake.state["agent_skills"]["stelow-build"]), 4)
+        self.assertEqual(len(fake.state["agent_skills"]["stelow-plan"]), 11)
+        self.assertEqual(len(fake.state["agent_skills"]["stelow-review"]), 4)
 
     def test_project_is_pointed_at_the_workflow(self):
         """Provisioning without the project binding leaves the board unchanged."""
@@ -457,13 +461,13 @@ class TestRedProof(HostCase):
         self.assertEqual(len(gaps), 1, gaps)
         self.assertIn("shape", gaps[0])
 
-    def test_a_gate_stage_owner_must_be_on_the_gatekeeper(self):
+    def test_a_gate_stage_owner_must_be_on_the_reviewer(self):
         plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], "feature", "agent", "")
         owners = dict(self.lock["owners"])
         owners["plan-gate"] = "stelow-gatekeeping-skill"
         gaps = HOST.owner_gaps(plan, owners)
         self.assertEqual(len(gaps), 1, gaps)
-        self.assertIn("gatekeeper", gaps[0])
+        self.assertIn("review", gaps[0])
 
 
 class TestFlowBackEdges(HostCase):

@@ -3,6 +3,9 @@
 ## First run against a real workspace
 
 ```bash
+export MULTICA_WORKSPACE_ID=<workspace-uuid>   # env wins over config/host.json
+export MULTICA_RUNTIME_ID=<runtime-uuid>
+export MULTICA_PROJECT_ID=<project-uuid>       # optional: binds the board
 ./bin/stelow-host sync              # network: pins stages.yaml + sha into stelow.lock.json
 ./bin/stelow-host plan              # no writes; read the whole output
 ./bin/stelow-host apply             # writes: skills → agents → workflow → project
@@ -25,7 +28,8 @@ Check these three things after the first `apply`:
 ## Updating stelow after a release
 
 ```bash
-./bin/stelow-host sync --refresh-skills   # re-pin stages.yaml, re-pull every skill
+./bin/stelow-host sync                   # re-pin stages.yaml
+./bin/stelow-host apply --refresh-skills   # re-pull every skill from its source
 ./bin/stelow-host plan                    # the new mapping, if any
 ./bin/stelow-host apply
 ./bin/stelow-host verify

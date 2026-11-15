@@ -9,13 +9,13 @@ daemon. Everything it does is `multica` CLI calls you could type yourself; it
 exists so you do not have to, and so the mapping stays reviewable.
 
 ```
-config/columns.json     the host's opinion: 18 stelow stages → board columns
+config/columns.json     the host's opinion: 18 stelow stages → board columns → 3 agents
 config/host.json        workspace knobs: repo, ref, runtime, model, defaults
-agents/*.md             agent identity + the Multica/state adapter rules
+agents/*.md             agent identity (plan, build, review) + the Multica/state adapter
 stages/columns.md       what each column asks of its handler
-bin/stelow-host         sync | plan | apply | verify | status
+bin/stelow-host         sync | plan | apply | verify | status | doctor
 docs/host-contract.md   the upstream contract this repo implements
-tests/run.py            the mapping and idempotency suite
+tests/run.py            the mapping, ownership, back-edge and idempotency suite
 ```
 
 ## Why this exists
@@ -23,9 +23,33 @@ tests/run.py            the mapping and idempotency suite
 Multica has three things stelow needs and no way to state them declaratively:
 skills as first-class objects, a workflow of status columns with per-column
 handlers and instructions, and a durable issue timeline. Getting stelow onto a
-workspace by hand is ~17 skill imports, 7–8 agents, 6–11 status columns, and a
-handful of handoffs, most of it easy to get subtly wrong (status keys must
+workspace by hand is up to 19 skill imports, 3 agents, 6–11 status columns, and
+a handful of handoffs, most of it easy to get subtly wrong (status keys must
 slugify from the column label, or updates diverge from creation forever).
+
+## Three agents, not one per column
+
+The mapping is deliberate: **`plan`** (triage → planning), **`build`
+(execution → verification), **`review`** (the four gates + audit).
+
+One agent per column looks like role specialization and mostly is not: the
+stages it would separate are sequential work on one subject, and splitting them
+multiplies issue-history re-reads and hand-offs while adding no checking. The
+2026 evidence is consistent on this — under an equal token budget a single
+agent matches or beats a multi-agent pipeline, multi-agent runs cost ~15x a
+plain chat, and the win per 1k tokens drops from 67.7 to 13.6–42.4. What *does*
+justify a separate agent is **explicit cross-checking**, which is exactly what a
+stelow gate is: a reviewer that did not produce the work it judges.
+
+So the split follows the only line in the methodology that resists merging —
+author versus critic. Each agent's brief (`agents/plan.md`, `agents/build.md`,
+`agents/review.md`) states its columns, what it produces, and the boundaries it
+must not cross (never approve your own work, never widen scope silently, never
+claim a check you did not run).
+
+If you want the fine-grained version anyway, give separate agents distinct
+names in `config/columns.json`; two columns naming the same agent get the union
+of their skills, which is what makes merging safe.
 
 ## Requirements
 
@@ -36,7 +60,8 @@ slugify from the column label, or updates diverge from creation forever).
 ## Quickstart
 
 ```bash
-# fill multica.workspace_id, multica.runtime_id and (optionally) multica.project_id
+# ids: export MULTICA_WORKSPACE_ID / MULTICA_RUNTIME_ID / MULTICA_PROJECT_ID
+# (or fill them in config/host.json — the env wins)
 ./bin/stelow-host sync                     # pin stages.yaml + catalog + transitions
 ./bin/stelow-host doctor                   # environment, pin, and stage ownership
 ./bin/stelow-host plan --intent feature    # what would change; writes nothing
@@ -47,6 +72,22 @@ slugify from the column label, or updates diverge from creation forever).
 `apply` is convergent: run it twice and the second run only updates. Skills are
 imported once and then refreshed from source (`--refresh-skills`); agents and the
 workflow are updated in place, never duplicated.
+
+### Keeping the skills current
+
+Skills are imported with `skill import --url https://github.com/<repo>/tree/<ref>/skills/<slug>`,
+so Multica keeps the **source reference** on each one. That means updating is a
+command, not a re-import:
+
+```bash
+./bin/stelow-host apply --refresh-skills    # multica skill refresh per skill
+```
+
+`skill refresh` re-downloads the skill from its source and replaces it in place,
+keeping its id, its agent assignments and its labels — so agents pick up the new
+version without being touched. Point `stelow.ref` at a tag if you want to
+control when; leave it at `main` to track the repo. Nothing runs on a schedule:
+make it a cron if you want it unattended.
 
 `doctor` is the check to run first: it verifies python, the `multica` binary,
 the workspace ids, the pin, that the skills are publicly importable, and the two
@@ -64,7 +105,7 @@ fails the run loudly:
 
 ```bash
 $ ./bin/stelow-host plan --intent bugfix
-  ... 11 skills, 5 agents ...      # bugfix skips scope/interface/architecture
+  ... 11 skills, 3 agents ...      # bugfix skips scope/interface/architecture
 ```
 
 Intents come from `stages.yaml#routes.intents`, so the four chains you can
@@ -79,8 +120,8 @@ provision are the four chains stelow defines:
 
 **Gates** are the four human review points (`gate`, `int-gate`, `plan-gate`,
 `diff-gate`). `--gates human` hands them to the project lead; `--gates agent`
-hands them to a gatekeeper agent that reads `review_mode` and either records the
-receipt and advances, or parks the issue with a reason.
+hands them to the `review` agent, which reads `review_mode` and either records
+the receipt and advances, or parks the issue with a reason.
 
 ```bash
 ./bin/stelow-host apply --intent feature --gates human --project <project-id>
@@ -88,14 +129,14 @@ receipt and advances, or parks the issue with a reason.
 
 ## Honest status
 
-- **Verified here**: the stage/intent/catalog parser against the real
-  `calionauta/stelow@main`; `doctor` end to end; the mapping, ownership and
-  convergence logic against an in-process fake of the CLI (27 tests,
+- **Verified**: the stage/intent/catalog parser against the real
+  `calionauta/stelow@main`; ownership and back-edges against the pinned
+  `stage-catalog.json` and `transitions.md`; `doctor` end to end; the mapping,
+  convergence and gate wiring against an in-process fake of the CLI (30 tests,
   `python3 tests/run.py`).
-- **Not yet verified**: a live workspace. The exact CLI surface was read from
-  Multica's source (`server/cmd/multica`), not from a running instance. Run
-  `doctor` and `plan` against your workspace before trusting `apply`, and read
-  `docs/operations.md` for the first-run checks.
+- **Run against a live workspace** before trusting `apply` on yours: `doctor`,
+  then `plan`, then `apply` on a fresh project. `docs/operations.md` lists what
+  to check and what a failed run looks like.
 
 ## Related
 
