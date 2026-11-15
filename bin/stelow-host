@@ -512,15 +512,23 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
             if skill not in skills:
                 skills.append(skill)
 
-    agents = []
+    agents: list[dict] = []
+    by_name: dict[str, dict] = {}
     for col in columns:
         if col.get("gate"):
             continue
-        if col["agent"] not in [a["agent"] for a in agents]:
-            agents.append({"agent": col["agent"], "skills": list(col.get("skills") or [])})
+        name = col["agent"]
+        if name not in by_name:
+            by_name[name] = {"agent": name, "skills": []}
+            agents.append(by_name[name])
+        for skill in col.get("skills") or []:
+            # Two columns may share one agent (fewer, broader agents add tokens
+            # nowhere and dilute attention less); the agent needs the union, or
+            # the stages it handles lose their owner and dispatch unguarded.
+            if skill not in by_name[name]["skills"]:
+                by_name[name]["skills"].append(skill)
     if gate_agent:
         agents.append({"agent": gate_agent, "skills": ["stelow-workflow-orchestrator"]})
-
     return {
         "intent": intent,
         "gates": gates,

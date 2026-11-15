@@ -492,6 +492,26 @@ class TestFlowBackEdges(HostCase):
         self.assertNotIn("context", edges, "a gate id is not a stage and must not survive parsing")
 
 
+    def test_two_columns_may_share_one_agent(self):
+        """A broad agent must get the union of both columns' skills.
+
+        Keeping only the first column's list leaves the second column's stages
+        owned by a skill the agent never loads — a stage dispatched unguarded,
+        and owner_gaps only notices when the primary catalog is complete.
+        """
+        groups = list(self.groups)
+        for group in groups:
+            if group["id"] in ("intake", "framing"):
+                group["agent"] = "stelow-plan"
+        plan = HOST.build_plan(self.host, groups, self.lock["intents"], "feature", "human", "")
+        shared = [a for a in plan["agents"] if a["agent"] == "stelow-plan"]
+        self.assertEqual(len(shared), 1, "one agent entry, not two")
+        wanted = set()
+        for group in groups:
+            if group.get("agent") == "stelow-plan":
+                wanted |= set(group["skills"])
+        self.assertEqual(set(shared[0]["skills"]), wanted)
+
 class TestVerify(HostCase):
     def test_verify_passes_right_after_apply(self):
         """A verify that fails on a fresh apply is a verify nobody will keep running."""
