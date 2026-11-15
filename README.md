@@ -1,7 +1,9 @@
 # stelow-host-multica
 
-Provision **stelow** onto [Multica](https://multica.ai): the three workflows the
-method needs, the agents that run them, and exactly the stelow skills each agent
+Provision **[stelow](https://github.com/calionauta/stelow)** onto
+[Multica](https://multica.ai): the three workflows the
+method needs, the agents that run them, and exactly the
+[stelow skills](https://github.com/calionauta/stelow/tree/main/skills) each agent
 gets — from the CLI, idempotently, with no clicks in the UI.
 
 This is a **provisioner**, not a plugin. It ships no runtime, no UI, and no
