@@ -5,12 +5,55 @@ shipped code. That is the wrong shape for most questions. "Critique this diff"
 does not need eighteen stages, and "should we charge per seat" does not need a
 build. A chain that long is a tax on every question that is not a feature.
 
-So there are two loose boards, declared in `boards/`:
+So there are two loose boards, declared in `boards/`, alongside the chain:
 
 | board | workflow | project | menu |
 |---|---|---|---|
-| `explore` | `stelow-explore` | Explore | the 14 single-shot `stelow-workflow-*` skills |
-| `research` | `stelow-research` | Research | the 21 `stelow-product-*` skills |
+| the chain | `stelow-feature-human` | **Build** | the 18 statuses in `config/columns.json` |
+| `explore` | `stelow-explore` | **Explore** | the 14 single-shot `stelow-workflow-*` skills |
+| `research` | `stelow-research` | **Research** | the 21 `stelow-product-*` skills |
+
+`config/projects.json` declares all three, so `stelow-host install` converges the
+whole workspace in one command and `install --check` verifies it without writing.
+
+### Why three projects, and where the state lives
+
+A card belongs to a project and a project has exactly one workflow, so different
+column sets cannot share a project. The three are different column sets, so they
+are three projects. Labels would have put a research answer in a board whose
+status names describe a build, which is how a card ends up `in review` for a
+month with nobody sure what is being reviewed.
+
+Nothing about a card lives in this repository. The declarations here say what the
+boards *are*; the cards, their statuses, comments and attachments live in the
+Multica workspace. That split is the point: the repo cannot drift from the live
+board because it never holds a copy of it — `install --check` compares the two.
+
+## Asking for a specific strategy
+
+A research card is a question plus the skill that answers it. `ask` writes both
+and moves the card to `run`, so nothing waits for a person to triage it:
+
+```bash
+./bin/stelow-host ask research "is R$97/mo defensible for a solo consultant?" --skill pricing
+./bin/stelow-host ask explore "critique the review-queue diff in PR 516" --skill diff-review
+```
+
+`--skill` takes the tail (`pricing`) or the full name. An unknown name is refused
+with the menu, because a typo that silently becomes "the runner picks" is a card
+that answers a different question than the one asked. Without `--skill` the card
+says so on purpose, and the runner has to name its choice in one line.
+
+By hand, the same thing is one line in the description:
+
+```
+**Strategy:** stelow-product-pricing
+```
+
+That line wins over the runner's own choice — it is the first rule the `run`
+column gives the agent.
+
+## What a board is
 
 Both are three columns:
 

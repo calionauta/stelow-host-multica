@@ -4,6 +4,33 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.11] - 2026-11-15
+
+### Added
+
+- **`install` converges the whole workspace: three boards, three projects.**
+  `config/projects.json` declares **Build** (the eighteen-status chain),
+  **Explore** and **Research**; `install` runs them in order and `install --check`
+  verifies each project still points at its declared workflow, writing nothing.
+  They are projects because a card belongs to a project and a project has one
+  workflow — three column sets cannot share one.
+
+- **`ask <board> "<question>" --skill <name>`** writes a card, fills in the
+  strategy line and moves it to `run`, so nothing waits in `open` for a triage
+  nobody asked for. The skill may be the tail (`pricing`) or the full name; an
+  unknown one is refused with the menu instead of quietly becoming "the runner
+  picks". `--dry-run` prints and writes nothing.
+
+- `docs/boards.md` answers where the state lives (Multica, not this repo) and how
+to name a strategy by hand, in one line.
+
+### Fixed
+
+- The test harness now mirrors `boards/` into its temporary root, which is what
+  let three of the new tests find real bugs instead of passing: `--dry-run`
+  created the card anyway, and the fake CLI did not answer the two calls `ask`
+  makes.
+
 ## [0.1.10] - 2026-11-15
 
 ### Fixed

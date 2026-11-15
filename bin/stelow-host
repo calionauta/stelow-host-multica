@@ -17,6 +17,7 @@ Python 3 stdlib only. Every Multica call is a subprocess of the real CLI.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import io
 import json
@@ -1330,6 +1331,124 @@ def resolve_project(multica: Multica, name: str) -> str:
     return ""
 
 
+def load_projects() -> list[dict]:
+    path = ROOT / "config" / "projects.json"
+    if not path.is_file():
+        return []
+    return json.loads(path.read_text()).get("projects") or []
+
+
+def project_workflow(multica: Multica, project_id: str) -> str:
+    try:
+        payload = multica.json(["project", "workflow", "get", project_id])
+    except Fail:
+        return ""
+    if isinstance(payload, dict):
+        return str(payload.get("workflow") or payload.get("workflow_name") or "")
+    return ""
+
+
+def scope_args(args, entry: dict):
+    """One declaration's view of the same command line."""
+    scoped = copy.copy(args)
+    scoped.board = entry.get("board")
+    scoped.project = entry["project"]
+    scoped.intent = entry.get("intent", "feature")
+    scoped.gates = entry.get("gates", "human")
+    return scoped
+
+
+def check_projects(host: dict, projections, groups, lock) -> int:
+    multica = Multica(host)
+    failed = 0
+    for entry in projections:
+        args = scope_args(
+            type("Args", (), {"json": False, "offline": True})(), entry
+        )
+        plan = resolve_plan(host, args, groups, lock)
+        project_id = resolve_project(multica, entry["project"])
+        if not project_id:
+            say(f"  MISSING  {entry['project']:<9} project does not exist; run install")
+            failed += 1
+            continue
+        live = project_workflow(multica, project_id)
+        if live == plan["workflow"]:
+            say(f"  OK       {entry['project']:<9} {live}")
+        else:
+            say(f"  FAIL     {entry['project']:<9} runs {live or '(nothing)'}, declaration says {plan['workflow']}")
+            failed += 1
+    return 1 if failed else 0
+
+
+def cmd_install(host: dict, args, groups, lock) -> int:
+    """Converge every declared board.
+
+    Each declaration is its own project with its own workflow, because a card
+    belongs to a project and a project has exactly one workflow. That is why
+    explore and research are projects rather than labels on one board: they are
+    different status sets, and a status belongs to a workflow.
+    """
+    projections = load_projects()
+    if not projections:
+        raise Fail("config/projects.json declares no projects")
+    if getattr(args, "check", False):
+        return check_projects(host, projections, groups, lock)
+    for entry in projections:
+        say(f"\n== {entry['project']} — {entry.get('why', '')}")
+        if cmd_apply(host, scope_args(args, entry), groups, lock) != 0:
+            return 1
+    return 0
+
+
+ASK_TEMPLATE = """**Question:** {question}
+
+**Strategy:** {skill}
+**By when it matters:** {when}
+
+House rules: one skill, one artefact, one page. Cite what you use, or say you do not know.
+"""
+
+
+def cmd_ask(host: dict, args, groups) -> int:
+    """Put one question on a board, with the strategy already named."""
+    board = load_board(args.board)
+    skill = args.skill or ""
+    if skill:
+        prefix = board["skill_prefix"]
+        if not skill.startswith(prefix):
+            skill = prefix + skill
+        if skill not in {entry["skill"] for entry in board["menu"]}:
+            names = ", ".join(sorted(entry["skill"].replace(prefix, "") for entry in board["menu"]))
+            raise Fail(f"{skill} is not on the {args.board} menu. On it: {names}")
+    multica = Multica(host)
+    project_id = resolve_project(multica, board["project"])
+    if not project_id:
+        raise Fail(f"project {board['project']} does not exist; run install first")
+    run_column = next((c["id"] for c in board["columns"] if not c.get("gate")), "")
+    question = " ".join(args.question).strip()
+    body_path = ROOT / ".stelow-cache" / "ask.md"
+    body_path.parent.mkdir(parents=True, exist_ok=True)
+    body_path.write_text(ASK_TEMPLATE.format(
+        question=question,
+        skill=skill or "(the runner picks from the menu and says why)",
+        when=args.when or "when the decision is needed",
+    ))
+    title = args.title or (question[:70] + ("…" if len(question) > 70 else ""))
+    if args.dry_run:
+        say(f"would create {title!r} on {board['project']}/{run_column} with strategy={skill or 'runner picks'}")
+        return 0
+    created = multica.json([
+        "issue", "create", "--project", project_id, "--title", title,
+        "--description-file", str(body_path),
+    ])
+    issue_id = str(created.get("id") or "")
+    if not issue_id:
+        raise Fail("the issue was created but its id could not be read")
+    multica.run(["issue", "status", issue_id, run_column])
+    say(f"{created.get('key') or issue_id}  → {board['project']}/{run_column}  strategy={skill or 'runner picks'}")
+    return 0
+
+
 def cmd_apply(host: dict, args, groups, lock) -> int:
     plan = resolve_plan(host, args, groups, lock)
     preflight(host)
@@ -1512,6 +1631,16 @@ def main(argv: list[str]) -> int:
     plan_cmd.add_argument("--board", help="render boards/<name>.json instead of the stage chain")
     apply_cmd = sub.add_parser("apply", help="converge the workspace", parents=[common])
     apply_cmd.add_argument("--board", help="converge boards/<name>.json instead of the stage chain")
+    apply_cmd.add_argument("--all", action="store_true", help="converge every project in config/projects.json")
+    install_cmd = sub.add_parser("install", help="converge the three boards: build, explore, research", parents=[common])
+    install_cmd.add_argument("--check", action="store_true", help="verify each project and its workflow, writing nothing")
+    ask_cmd = sub.add_parser("ask", help="put one question on a board, with the strategy named", parents=[common])
+    ask_cmd.add_argument("board", help="explore or research")
+    ask_cmd.add_argument("question", nargs="+", help="the question, in one sentence")
+    ask_cmd.add_argument("--skill", help="a skill name or just its tail, e.g. pricing")
+    ask_cmd.add_argument("--when", help="by when it matters")
+    ask_cmd.add_argument("--title", help="override the derived title")
+    ask_cmd.add_argument("--dry-run", action="store_true", help="print what would be created")
     board_cmd = sub.add_parser("board", help="check a board declaration without touching the workspace", parents=[common])
     board_cmd.add_argument("names", nargs="*", help="board names; default is every file in boards/")
     sub.add_parser("verify", help="assert the live workspace matches the plan", parents=[common])
@@ -1544,6 +1673,10 @@ def main(argv: list[str]) -> int:
             return cmd_status(host, args, groups, lock)
         if args.command == "board":
             return cmd_board(host, args)
+        if args.command == "install" or (args.command == "apply" and getattr(args, "all", False)):
+            return cmd_install(host, args, groups, lock)
+        if args.command == "ask":
+            return cmd_ask(host, args, groups)
         if args.command == "card":
             return cmd_card(host, args, groups)
         if args.command == "doctor":

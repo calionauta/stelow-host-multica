@@ -104,7 +104,7 @@ class FakeMultica:
     def __init__(self, host):
         self.calls = []
         self.state = {"skills": {}, "agents": {}, "agent_skills": {}, "workflows": {}, "projects": {},
-                      "project_titles": {"proj-1": "Proj One"}}
+                      "project_titles": {"proj-1": "Proj One"}, "issues": {}}
         self.seq = 0
         FakeMultica.last = self
 
@@ -181,6 +181,20 @@ class FakeMultica:
                 normalized.append(entry)
             self.state["workflows"][name] = normalized
             return 0, json.dumps({"name": name, "steps": normalized}), ""
+        if args[:2] == ["issue", "create"]:
+            issue_id = self._next("issue")
+            title = args[args.index("--title") + 1]
+            self.state["issues"][issue_id] = {
+                "id": issue_id, "key": "CAL-%d" % (len(self.state["issues"]) + 1),
+                "title": title, "status": "todo", "project": args[args.index("--project") + 1],
+            }
+            return 0, json.dumps(self.state["issues"][issue_id]), ""
+        if args[:2] == ["issue", "status"]:
+            issue = self.state.get("issues", {}).get(args[2])
+            if not issue:
+                return 1, "", "issue not found"
+            issue["status"] = args[3]
+            return 0, json.dumps(issue), ""
         if args[:2] == ["project", "list"]:
             titles = self.state["project_titles"]
             return 0, json.dumps([{"id": pid, "title": title} for pid, title in titles.items()]), ""
@@ -232,7 +246,7 @@ class FakeMultica:
 class HostCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="stelow-host-test-"))
-        for name in ("config", "agents", "stages"):
+        for name in ("config", "agents", "stages", "boards"):
             shutil.copytree(REPO / name, self.tmp / name)
         (self.tmp / ".stelow-cache").mkdir()
         self.write_stages()
@@ -948,6 +962,75 @@ class TestStalledCards(unittest.TestCase):
         now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
         issues = [{"key": "CAL-4", "id": "CAL-4", "status": "run"}]
         self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now), [])
+
+
+class TestInstall(HostCase):
+    def test_projects_json_declares_the_three_boards(self):
+        # Catches: a board that ships as a file nobody installs, so the README
+        # promises three boards and `install` converges two.
+        entries = json.loads((REPO / "config" / "projects.json").read_text())["projects"]
+        self.assertEqual([e["project"] for e in entries], ["Build", "Explore", "Research"])
+        for entry in entries:
+            if entry.get("board"):
+                self.assertTrue((REPO / "boards" / (entry["board"] + ".json")).is_file(), entry["board"])
+            else:
+                self.assertTrue(entry.get("declaration"), "the chain entry names its declaration")
+
+    def test_install_check_fails_when_a_project_runs_another_workflow(self):
+        # Catches: a project pointed at the wrong board, which reports green
+        # everything except the one thing that matters.
+        entries = json.loads((REPO / "config" / "projects.json").read_text())["projects"]
+        for entry in entries:
+            self.fake.state["project_titles"]["id-" + entry["project"]] = entry["project"]
+        self.fake.state["projects"] = {}
+        code = HOST.cmd_install(self.host, self.args(check=True), self.groups, self.lock)
+        self.assertEqual(code, 1)
+
+    def args(self, **kwargs):
+        scope = types.SimpleNamespace(intent="feature", gates="human", project=None,
+                                      migrate=False, refresh_skills=False, json=False,
+                                      offline=True, board=None, all=False, check=False)
+        for key, value in kwargs.items():
+            setattr(scope, key, value)
+        return scope
+
+
+class TestAsk(HostCase):
+    def setUp(self):
+        super().setUp()
+        self.fake.state["project_titles"]["proj-research"] = "Research"
+
+    def ask(self, board="research", question=("is", "this", "priced", "right"), **kwargs):
+        scope = types.SimpleNamespace(board=board, question=list(question), skill=None,
+                                      when=None, title=None, dry_run=False, json=False)
+        for key, value in kwargs.items():
+            setattr(scope, key, value)
+        return HOST.cmd_ask(self.host, scope, self.groups)
+
+    def test_a_named_strategy_is_resolved_from_its_tail(self):
+        # Catches: typing `pricing` and getting a card the runner is free to
+        # answer with any skill, which is what happened before `ask` existed.
+        self.ask(skill="pricing")
+        issue = list(self.fake.state["issues"].values())[0]
+        body = (self.tmp / ".stelow-cache" / "ask.md").read_text()
+        self.assertIn("stelow-product-pricing", body)
+        self.assertEqual(issue["status"], "run")
+
+    def test_an_unknown_strategy_is_refused_listing_the_menu(self):
+        # Catches: a typo silently becoming the runner's own choice.
+        with self.assertRaises(HOST.Fail) as caught:
+            self.ask(skill="pricng")
+        self.assertIn("is not on the research menu", str(caught.exception))
+
+    def test_the_card_lands_on_the_board_it_names(self):
+        # Catches: `ask research` writing into the build chain's project.
+        self.ask()
+        self.assertEqual(list(self.fake.state["issues"].values())[0]["project"], "proj-research")
+
+    def test_dry_run_writes_nothing(self):
+        # Catches: a --dry-run that creates the card anyway.
+        self.ask(dry_run=True)
+        self.assertEqual(self.fake.state["issues"], {})
 
 
 class TestArtifactReport(unittest.TestCase):

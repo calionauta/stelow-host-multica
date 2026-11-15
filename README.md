@@ -27,20 +27,27 @@ workspace by hand is up to 19 skill imports, 3 agents, 6–11 status columns, an
 a handful of handoffs, most of it easy to get subtly wrong (status keys must
 slugify from the column label, or updates diverge from creation forever).
 
-## Two shapes: the chain, and the boards
+## Three boards: build, explore, research
 
 The chain carries one idea to shipped code. Most questions are not that, so
-`boards/` declares two loose boards instead: **explore** (one `stelow-workflow-*`
-stage skill applied to something that exists) and **research** (one
-`stelow-product-*` skill on one decision). Three columns, one skill per card:
+`config/projects.json` declares three projects and `install` converges all of
+them: **Build** (the eighteen-status chain), **Explore** (one `stelow-workflow-*`
+stage skill applied to something that exists), and **Research** (one
+`stelow-product-*` skill on one decision). The two loose boards are three
+columns: `open` → `run` → `review`.
 
 ```bash
-./bin/stelow-host board                 # validate the declarations, no network
-./bin/stelow-host apply --board research
+./bin/stelow-host board                              # validate declarations, no network
+./bin/stelow-host install --check                     # do the live projects match?
+./bin/stelow-host install                             # converge all three
+./bin/stelow-host ask research "is R$97/mo defensible?" --skill pricing
 ```
 
-[`docs/boards.md`](docs/boards.md) explains why one card carries exactly one
-skill, and how to add a third board.
+A card belongs to a project and a project has one workflow, which is why the
+three are projects and not labels. Nothing about a card lives in this
+repository: the declarations say what the boards are, Multica holds the cards,
+and `install --check` compares the two. [`docs/boards.md`](docs/boards.md)
+explains the one-skill rule and how to ask for a named strategy.
 
 ## Watching a board that is not moving
 
