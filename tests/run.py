@@ -12,6 +12,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -652,7 +653,7 @@ class TestStageInstructionGuards(unittest.TestCase):
         self.assertIn("Artifacts leave as files", self.adapter)
         self.assertIn("attached", self.section("framing"))
         self.assertIn("attached", self.section("build"))
-        self.assertIn("Attach the audit table", self.section("audit"))
+        self.assertIn("18-audit-table.md", self.section("audit"))
         for gate in ("product_gate", "interface_gate"):
             self.assertIn("attached", self.section(gate), gate)
 
@@ -704,6 +705,78 @@ class TestUpstreamCheck(unittest.TestCase):
         not_found = urllib.error.HTTPError("https://x/SKILL.md", 404, "Not Found", {}, None)
         with mock.patch.object(urllib.request, "urlopen", side_effect=not_found):
             self.assertEqual(HOST.upstream_status("https://x/SKILL.md"), 404)
+
+
+class TestArtifactsAndParking(unittest.TestCase):
+    def setUp(self):
+        self.columns = json.loads((REPO / "config" / "columns.json").read_text())
+        self.md = (REPO / "stages" / "columns.md").read_text()
+        self.adapter = (REPO / "agents" / "_adapter.md").read_text()
+
+    def test_every_column_declares_its_artifacts(self):
+        # Catches: a new column that names no artifact, which lets its stage hand
+        # nothing over while still looking finished.
+        for group in self.columns["groups"]:
+            self.assertIn("artifacts", group, f"{group['id']} declares no artifacts")
+            if group["id"] != "intake":
+                self.assertTrue(group["artifacts"], f"{group['id']} declares an empty artifact list")
+
+    def test_artifact_names_sort_by_stage_and_kind(self):
+        # Catches: `DECISION.md`, `spec-tech` and `spec-product_v2.md` on one
+        # card, where nothing sorts and prose mixes with data.
+        pattern = re.compile(r"^\d{2}-[a-z0-9-]+\.(md|json)$")
+        seen = set()
+        for group in self.columns["groups"]:
+            for name in group["artifacts"]:
+                self.assertRegex(name, pattern)
+                self.assertNotIn(name, seen, f"{name} is declared twice")
+                seen.add(name)
+
+    def test_columns_md_lists_the_same_artifacts(self):        # Catches: the two files drifting apart, which is how the artifact list
+        # stops matching what the agent is actually told to attach.
+        for group in self.columns["groups"]:
+            for name in group["artifacts"]:
+                self.assertIn(name, self.md, f"{name} is in columns.json but not in columns.md")
+        declared = {name for group in self.columns["groups"] for name in group["artifacts"]}
+        for name in re.findall(r"`(\d{2}-[a-z0-9-]+\.(?:md|json))`", self.md):
+            self.assertIn(name, declared, f"{name} is in columns.md but not in columns.json")
+
+
+class TestAskingLeavesATrace(unittest.TestCase):
+    """A parked card has to look parked, and the instructions have to say so.
+
+    On the second smoke run a card parked for a human ruling sat in its column
+    with no run for forty minutes: nothing marked it, nothing woke it, and the
+    person reading it assumed the agent was still working.
+    """
+
+    def setUp(self):
+        self.adapter = (REPO / "agents" / "_adapter.md").read_text()
+
+    def test_parking_marks_the_card_and_arms_a_wakeup(self):
+        for command in (
+            "multica issue label add",
+            "needs-human",
+            "multica issue wakeup create",
+            "multica issue label remove",
+        ):
+            self.assertIn(command, self.adapter, f"the adapter no longer teaches {command!r}")
+
+    def test_parking_is_reserved_for_rulings(self):
+        # Catches: an agent parking on a finding it could close by reading the
+        # code, which hands the human engineering work and stops the card.
+        self.assertIn("Park only when the answer changes what ships", self.adapter)
+
+    def test_the_adapter_carries_the_density_rules(self):
+        for rule in ("<nn>-<kind>.<ext>", "## Tests run once", "## Asking is a state"):
+            self.assertIn(rule, self.adapter, f"the adapter dropped {rule!r}")
+
+    def test_requirement_ids_are_minted_once(self):
+        # Catches: audit renumbering requirements it cannot trace back to the
+        # spec, which turns traceability into a translation exercise.
+        md = (REPO / "stages" / "columns.md").read_text()
+        self.assertIn("Mint the requirement ids here", md)
+        self.assertIn("Cite the spec's ids", md)
 
 
 class TestHostConfigEnvironment(unittest.TestCase):

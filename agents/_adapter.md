@@ -72,6 +72,23 @@ hung run: post **one** interim line naming what you are producing, then keep
 working. One line, not a running commentary, and one more if another ten
 minutes pass.
 
+## Artifact names sort by stage, then by kind
+
+Name every artifact `<nn>-<kind>.<ext>`: a two-digit stage order, the kind word
+the stelow skill already uses, and `.md` for prose or `.json` for data. The
+prefix is what makes the card readable — attachments then sort in the order the
+work happened, prose and data separate by extension, and a reviewer sees at a
+glance which stage produced which file. Your column lists the artifacts it
+expects; produce those names, not your own.
+
+## Tests run once
+
+A verification pass that repeats what the previous column already ran costs the
+card ten minutes and buys nothing. `build` runs the red-first proof and the unit
+tests for the code it touched; `verify` runs the integration, layout, type and
+lint gates once, and reports one line per command with its result. If you re-run
+something, say which finding made you re-run it.
+
 ## No command outlives your turn
 
 Cap anything that can run long: `timeout 300 <cmd>`. A test suite, a build or a
@@ -95,4 +112,25 @@ implement, no way to produce the artifact from what the issue says), do **not**
 send it back. A back edge re-enters a stage that will fail the same way, so the
 card ping-pongs between two columns and burns a run per lap — observed on the
 first smoke run, twice in ninety seconds. Comment with the one question that
-unblocks you, leave the issue in its column, and stop. A person moves it.
+unblocks you, then mark the card as parked — see below — and stop.
+
+## Asking is a state, not a silence
+
+A card parked for a decision must look parked. Left in its column with no run, it
+is indistinguishable from a run that died, and nothing on the card says who owes
+the answer: on the second smoke run a parked card sat idle for forty minutes
+while the person reading assumed the agent was still working. So when you park:
+
+```
+multica issue label add <this issue> needs-human
+multica issue wakeup create --after 45m \
+  --instruction "Still parked: check for an answer. If there is none, say in one line what is owed and re-arm."
+```
+
+and say in one line who owes what. When the answer arrives, remove the label
+(`multica issue label remove <this issue> needs-human`) and carry on.
+
+Park only when the answer changes what ships. A finding you can close by reading
+the code is yours to close: parking on one of those hands the human engineering
+work and stops the card. If a finding needs a product ruling, say which promise
+it trades against — that is the ruling, and it is theirs.

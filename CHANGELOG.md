@@ -4,6 +4,39 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.3] - 2026-11-15
+
+Second smoke run, eleven gaps, all fixed here.
+
+### Added
+
+- **Asking is a state, not a silence.** A card parked for a decision now carries
+  the `needs-human` label and a wakeup that returns to it, and the instruction to
+  do both lives in the adapter. On the smoke run a parked card sat in `build`
+  with no run for forty minutes, and nothing on the board distinguished it from a
+  run that had died.
+
+- **Artifact names sort by stage, then by kind.** `<nn>-<kind>.<ext>`: a
+  two-digit order, the kind word the stelow skill already uses, `.md` for prose
+  and `.json` for data. The card now reads as a sequence instead of an
+  alphabetical pile of `DECISION.md`, `spec-tech` and `spec-product_v2.md`.
+
+- **`artifacts` per column** in `config/columns.json`, mirrored in
+  `stages/columns.md` and checked against each other, so a column cannot claim to
+  be finished while handing nothing over.
+
+- **Requirement ids minted once.** Framing gives every product promise a stable
+  `S1..Sn`, and design, tech, build and audit cite that id instead of restating
+  the promise. The audit no longer has to translate between its own numbering and
+  the spec's.
+
+### Changed
+
+- **Tests run once.** `build` runs the red-first proof and the unit tests for the
+  code it touched; `verify` runs the integration, layout, type and lint gates and
+  reports one line per command. The smoke run spent two forty-minute passes
+  re-running what the other column had already run.
+
 ## [0.1.2] - 2026-11-15
 
 ### Fixed
