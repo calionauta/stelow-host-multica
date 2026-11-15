@@ -205,6 +205,12 @@ class FakeMultica:
                 return 1, "", "issue not found"
             issue["status"] = args[3]
             return 0, json.dumps(issue), ""
+        if args[:2] == ["issue-status", "list"]:
+            return 0, json.dumps([{"key": key, "name": key} for key in self.state.setdefault("statuses", [])]), ""
+        if args[:2] == ["issue-status", "create"]:
+            key = args[args.index("--key") + 1]
+            self.state.setdefault("statuses", []).append(key)
+            return 0, json.dumps({"key": key}), ""
         if args[:2] == ["project", "list"]:
             titles = self.state["project_titles"]
             return 0, json.dumps([{"id": pid, "title": title} for pid, title in titles.items()]), ""
@@ -990,26 +996,44 @@ class TestWorkflowName(unittest.TestCase):
 
 
 class TestInstall(HostCase):
-    def test_projects_json_declares_the_three_boards(self):
-        # Catches: a board that ships as a file nobody installs, so the README
-        # promises three boards and `install` converges two.
-        entries = json.loads((REPO / "config" / "projects.json").read_text())["projects"]
-        self.assertEqual([e["project"] for e in entries], ["Build", "Explore", "Research"])
-        for entry in entries:
-            if entry.get("board"):
-                self.assertTrue((REPO / "boards" / (entry["board"] + ".json")).is_file(), entry["board"])
-            else:
-                self.assertTrue(entry.get("declaration"), "the chain entry names its declaration")
+    def test_install_declares_one_workflow_with_every_track(self):
+        # Catches: a track naming a board nobody ships, so `install` converges a
+        # workflow with a column the repository cannot describe.
+        install = HOST.load_install()
+        self.assertEqual(install["workflow"], "stelow")
+        self.assertEqual([track["id"] for track in install["tracks"]], ["build", "explore", "research"])
+        for track in install["tracks"]:
+            if track["kind"] == "loose":
+                self.assertTrue((REPO / "boards" / (track["board"] + ".json")).is_file(), track["board"])
+                self.assertNotIn("-", track["entry"])
+
+    def test_a_track_entry_is_a_status_key_the_tracker_accepts(self):
+        # Catches: a hyphen in a track entry, which a tracker rejects with a
+        # message about the key shape rather than about the track.
+        self.assertEqual(HOST.track_entry("build"), "intake")
+        self.assertEqual(HOST.track_entry("explore"), "explore_run")
+        self.assertEqual(HOST.track_entry("research"), "research_run")
 
     def test_install_check_fails_when_a_project_runs_another_workflow(self):
-        # Catches: a project pointed at the wrong board, which reports green
+        # Catches: a repository project left on another flow, which reports green
         # everything except the one thing that matters.
-        entries = json.loads((REPO / "config" / "projects.json").read_text())["projects"]
-        for entry in entries:
-            self.fake.state["project_titles"]["id-" + entry["project"]] = entry["project"]
-        self.fake.state["projects"] = {}
+        self.host["multica"]["project_id"] = "proj-1"
+        self.fake.state["projects"] = {"proj-1": "someone-elses-flow"}
+        self.fake.state["workflows"] = {}
         code = HOST.cmd_install(self.host, self.args(check=True), self.groups, self.lock)
         self.assertEqual(code, 1)
+
+    def test_install_check_passes_when_every_project_runs_the_workflow(self):
+        # Catches: a check that fails on a correct workspace, which teaches people
+        # to ignore it.
+        name = HOST.load_install()["workflow"]
+        self.host["multica"]["project_id"] = "proj-1"
+        plan = HOST.merged_plan(self.host, self.args(), self.groups, self.lock)
+        steps = HOST.build_steps(plan, self.host, HOST.IdMap({}), create=False)
+        self.fake.state["projects"] = {"proj-1": name}
+        self.fake.state["workflows"] = {name: [{"status_key": s["status_key"]} for s in steps]}
+        code = HOST.cmd_install(self.host, self.args(check=True), self.groups, self.lock)
+        self.assertEqual(code, 0)
 
     def args(self, **kwargs):
         scope = types.SimpleNamespace(intent="feature", gates="human", project=None,
@@ -1050,10 +1074,11 @@ class TestAsk(HostCase):
     def setUp(self):
         super().setUp()
         self.fake.state["project_titles"]["proj-research"] = "Research"
+        self.fake.state["project_titles"]["proj-build"] = "Build"
 
     def ask(self, board="research", question=("is", "this", "priced", "right"), **kwargs):
         scope = types.SimpleNamespace(board=board, question=list(question), skill=None,
-                                      when=None, title=None, dry_run=False, json=False)
+                                      when=None, title=None, dry_run=False, json=False, project=None)
         for key, value in kwargs.items():
             setattr(scope, key, value)
         return HOST.cmd_ask(self.host, scope, self.groups)
@@ -1065,7 +1090,7 @@ class TestAsk(HostCase):
         issue = list(self.fake.state["issues"].values())[0]
         body = (self.tmp / ".stelow-cache" / "ask.md").read_text()
         self.assertIn("stelow-product-pricing", body)
-        self.assertEqual(issue["status"], "run")
+        self.assertEqual(issue["status"], "research_run")
 
     def test_an_unknown_strategy_is_refused_listing_the_menu(self):
         # Catches: a typo silently becoming the runner's own choice.
@@ -1073,15 +1098,30 @@ class TestAsk(HostCase):
             self.ask(skill="pricng")
         self.assertIn("is not on the research menu", str(caught.exception))
 
-    def test_the_card_lands_on_the_board_it_names(self):
-        # Catches: `ask research` writing into the build chain's project.
+    def test_a_question_lands_in_the_container_it_names(self):
+        # Catches: `ask research` writing into another repository's project.
+        # The container is the repository, not the track: without --project the
+        # card goes to the configured project, because that is the repo you are
+        # working in.
+        self.ask(project="Research")
+        self.assertEqual(list(self.fake.state["issues"].values())[0]["project"], "proj-research")
+
+    def test_the_environment_project_wins_when_nothing_is_named(self):
+        # Catches: a track quietly redirecting work to its own container instead
+        # of the repository the host is pointed at.
+        self.host["multica"]["project_id"] = "proj-1"
+        self.ask()
+        self.assertEqual(list(self.fake.state["issues"].values())[0]["project"], "proj-1")
+
+    def test_without_a_project_it_falls_back_to_the_track(self):
+        # Catches: an unconfigured host writing nowhere, or writing everywhere.
+        self.host["multica"]["project_id"] = ""
         self.ask()
         self.assertEqual(list(self.fake.state["issues"].values())[0]["project"], "proj-research")
 
     def test_build_opens_on_the_chain_not_in_the_entry_column(self):
         # Catches: `ask build` leaving the card in `todo`, where nothing runs.
-        self.fake.state["project_titles"]["proj-build"] = "Build"
-        self.ask(board="build")
+        self.ask(board="build", project="Build")
         self.assertEqual(list(self.fake.state["issues"].values())[0]["status"], "intake")
 
     def test_dry_run_writes_nothing(self):

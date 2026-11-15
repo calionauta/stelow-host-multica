@@ -27,27 +27,33 @@ workspace by hand is up to 19 skill imports, 3 agents, 6–11 status columns, an
 a handful of handoffs, most of it easy to get subtly wrong (status keys must
 slugify from the column label, or updates diverge from creation forever).
 
-## Three boards: build, explore, research
+## One workflow, three tracks
 
-The chain carries one idea to shipped code. Most questions are not that, so
-`config/projects.json` declares three projects and `install` converges all of
-them: **Build** (the eighteen-status chain), **Explore** (one `stelow-workflow-*`
-stage skill applied to something that exists), and **Research** (one
-`stelow-product-*` skill on one decision). The two loose boards are three
-columns: `open` → `run` → `review`.
+A tracker binds exactly one flow to a container, and a container is usually a
+repository. So "run explore against this repo" cannot mean a second flow: it
+means a second **track** inside the same flow. `install` converges one workflow
+with every track, and attaches it to the projects you name — one project per
+repository, which is how people already use them.
+
+| track | first status | what it carries |
+|---|---|---|
+| build | `intake` | one idea carried to shipped code, eighteen statuses |
+| explore | `explore_run` | one `stelow-workflow-*` skill applied to something that exists |
+| research | `research_run` | one `stelow-product-*` skill on one decision |
+
+A card picks its track by the status it enters, and `ask` moves it there:
 
 ```bash
-./bin/stelow-host board                              # validate declarations, no network
-./bin/stelow-host install --check                     # do the live projects match?
-./bin/stelow-host install                             # converge all three
+./bin/stelow-host board                            # validate declarations, no network
+./bin/stelow-host install --check                  # does the live workspace match?
+./bin/stelow-host install --all-projects           # converge the workflow, attach to every project
 ./bin/stelow-host ask research "is R$97/mo defensible?" --skill pricing
+./bin/stelow-host ask build "cards must not stall"
 ```
 
-A card belongs to a project and a project has one workflow, which is why the
-three are projects and not labels. Nothing about a card lives in this
-repository: the declarations say what the boards are, Multica holds the cards,
-and `install --check` compares the two. [`docs/boards.md`](docs/boards.md)
-explains the one-skill rule and how to ask for a named strategy.
+Nothing about a card lives in this repository: the declarations say what the
+tracks are, the tracker holds the cards, and `install --check` compares the two.
+[`docs/boards.md`](docs/boards.md) explains the reasoning and how to add a track.
 
 ## Watching a board that is not moving
 

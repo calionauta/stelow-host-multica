@@ -1,0 +1,26 @@
+{
+  "_comment": "One workflow, several tracks. A tracker binds exactly one flow to a container, and a container is usually a repository, so three shapes cannot be three flows inside one project. They are one flow with three tracks; a card picks its track by the status it first enters.",
+  "workflow": "stelow",
+  "tracks": [
+    {
+      "id": "build",
+      "kind": "chain",
+      "entry": "intake",
+      "why": "one idea carried to shipped code"
+    },
+    {
+      "id": "explore",
+      "kind": "loose",
+      "board": "explore",
+      "entry": "explore_run",
+      "why": "one stage skill applied to something that already exists"
+    },
+    {
+      "id": "research",
+      "kind": "loose",
+      "board": "research",
+      "entry": "research_run",
+      "why": "one product skill on one decision"
+    }
+  ]
+}

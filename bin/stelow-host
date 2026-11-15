@@ -596,6 +596,102 @@ def section_map(path: Path) -> dict[str, str]:
     return {k: "\n".join(v).strip() for k, v in out.items()}
 
 
+def load_install() -> dict:
+    path = ROOT / "config" / "install.json"
+    if not path.is_file():
+        raise Fail("config/install.json is missing")
+    return json.loads(path.read_text())
+
+
+def loose_columns(board_name: str) -> tuple[list[dict], dict]:
+    """A board's columns with the track baked into the key and the label.
+
+    The key prefix is what makes one workflow able to hold several tracks: a
+    card's status says which shape it is walking, and no two tracks can collide
+    on `review`. The separator is an underscore because a tracker's status keys
+    only admit lowercase letters, digits and underscores.
+    """
+    board = load_board(board_name)
+    track = board_name
+    columns = []
+    for index, column in enumerate(board["columns"]):
+        key = f"{track}_{column['id']}"
+        following = board["columns"][index + 1]["id"] if index + 1 < len(board["columns"]) else None
+        columns.append({
+            "id": key,
+            "label": f"{board['project']}: {column['label']}",
+            "category": column.get("category", "started"),
+            "gate": bool(column.get("gate")),
+            "agent": None if column.get("gate") else board["runner"],
+            "stages": [],
+            "back_to": f"{track}_{column['back_to']}" if column.get("back_to") else None,
+            "next": f"{track}_{following}" if following else "done",
+            "instructions": column["instructions"],
+        })
+    agent = {"agent": board["runner"], "skills": [item["skill"] for item in board["menu"]]}
+    return columns, agent
+
+
+class IdMap(dict):
+    """Stands in for an id it has not seen, so a check can compare steps on a
+    workspace where that agent does not exist yet."""
+
+    def __missing__(self, key):
+        return str(key)
+
+
+def merged_plan(host: dict, args, groups: list[dict], lock: dict) -> dict:
+    """The chain and every loose track in one workflow."""
+    install = load_install()
+    chain = build_plan(host, groups, lock["intents"], args.intent or "feature", args.gates or "human", "")
+    columns = [dict(column) for column in chain["columns"]]
+    # The chain ends at done: without this the linear default would hand the last
+    # chain column to the first loose one, which is a jump between tracks.
+    columns[-1]["next"] = "done"
+    agents = list(chain["agents"])
+    skills = list(chain["skills"])
+    for track in install["tracks"]:
+        if track["kind"] != "loose":
+            continue
+        extra, agent = loose_columns(track["board"])
+        columns.extend(extra)
+        if agent["agent"] not in [entry["agent"] for entry in agents]:
+            agents.append(agent)
+        for skill in agent["skills"]:
+            if skill not in skills:
+                skills.append(skill)
+    return {
+        "intent": "merged",
+        "gates": args.gates or "human",
+        "project": "",
+        "columns": columns,
+        "skills": skills,
+        "agents": agents,
+        "workflow": install["workflow"],
+        "_merged": True,
+    }
+
+
+def track_entry(track_id: str) -> str:
+    for track in load_install()["tracks"]:
+        if track["id"] == track_id:
+            entry = str(track["entry"])
+            return entry if track["kind"] == "chain" else entry.replace("-", "_")
+    raise Fail(f"no track called {track_id}; tracks are: " + ", ".join(t["id"] for t in load_install()["tracks"]))
+
+
+def loose_gate_ids() -> set[str]:
+    gates = set()
+    for track in load_install()["tracks"]:
+        if track["kind"] != "loose":
+            continue
+        board = load_board(track["board"])
+        for column in board["columns"]:
+            if column.get("gate"):
+                gates.add(f"{track['board']}-{column['id']}")
+    return gates
+
+
 def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], intent: str, gates: str, project: str) -> dict:
     columns = columns_for(intent, groups, intents)
     live_keys = {col["id"] for col in columns}
@@ -659,7 +755,10 @@ def build_steps(plan: dict, host: dict, agent_ids: dict[str, str], create: bool)
     columns = plan["columns"]
     steps: list[dict] = [{"status_key": "todo", "next_status_key": columns[0]["id"] if columns else "done"}]
     for index, col in enumerate(columns):
-        nxt = columns[index + 1]["id"] if index + 1 < len(columns) else "done"
+        # A track that is not the chain names its own successor: the last explore
+        # column must not fall into the first research column just because it is
+        # next in the list.
+        nxt = col.get("next") or (columns[index + 1]["id"] if index + 1 < len(columns) else "done")
         step: dict = {}
         if create:
             step["new_status"] = {"name": col["label"], "category": col["category"]}
@@ -738,6 +837,8 @@ def resolve_plan(host: dict, args, groups, lock) -> dict:
     them: `apply --board` silently applied the chain instead. One resolver, so a
     shape added later cannot be honoured by half the commands.
     """
+    if getattr(args, "install", False):
+        return merged_plan(host, args, groups, lock)
     board_spec = getattr(args, "board", None)
     if not board_spec:
         return build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
@@ -1199,6 +1300,9 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             # in columns.json, which is why the first version of this check could
             # not see the card that sat in it for eight minutes.
             known = {str(group["id"]) for group in groups} | {"todo", "done", "cancelled"}
+            for track in load_install()["tracks"]:
+                if track["kind"] == "loose":
+                    known |= {column["id"] for column in loose_columns(track["board"])[0]}
             for issue in issues:
                 issue_id = str(issue.get("id") or "")
                 if not issue_id:
@@ -1243,7 +1347,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             park += [key for key in stale_idle if key not in park]
             if getattr(args, "fix", False):
                 by_key = {issue.get("key"): issue for issue in issues}
-                gates_now = gate_ids(groups)
+                gates_now = gate_ids(groups) | loose_gate_ids()
                 restart_after = f"{int(float(load_policy().get('stall_minutes', 5)))}m"
                 marked = restarted = 0
                 for key in park:
@@ -1434,23 +1538,98 @@ def check_projects(host: dict, projections, groups, lock) -> int:
     return 1 if failed else 0
 
 
-def cmd_install(host: dict, args, groups, lock) -> int:
-    """Converge every declared board.
+def install_targets(host: dict, args) -> list[str]:
+    """Which containers get the workflow.
 
-    Each declaration is its own project with its own workflow, because a card
-    belongs to a project and a project has exactly one workflow. That is why
-    explore and research are projects rather than labels on one board: they are
-    different status sets, and a status belongs to a workflow.
+    One workflow serves every container, so the question is never "which flow for
+    this repo". `--all-projects` covers a workspace where each repository is a
+    project; without it, the one named by env or by `--project`.
     """
-    projections = load_projects()
-    if not projections:
-        raise Fail("config/projects.json declares no projects")
+    if getattr(args, "all_projects", False):
+        rows = rows_of(Multica(host).json(["project", "list"]), "project list")
+        return [str(row.get("title") or row.get("name")) for row in rows if row.get("title") or row.get("name")]
+    if getattr(args, "project", None):
+        return [str(args.project)]
+    env = host["multica"].get("project_id") or ""
+    return [env] if env else ["stelow"]
+
+
+def workflow_step_keys(payload: dict) -> set[str]:
+    """The status keys a workflow defines, whatever shape the API answers in."""
+    keys = set()
+    for step in payload.get("steps") or []:
+        if not isinstance(step, dict):
+            status = str(step)
+        else:
+            status = step.get("status_key") or step.get("status") or ""
+            if isinstance(status, dict):
+                status = status.get("key") or status.get("name") or ""
+        if status:
+            keys.add(str(status))
+    return keys
+
+
+def check_install(host: dict, args, groups, lock) -> int:
+    install = load_install()
+    plan = merged_plan(host, args, groups, lock)
+    multica = Multica(host)
+    try:
+        live_agents = {str(row.get("name")): str(row.get("id")) for row in rows_of(multica.json(["agent", "list"]), "agent list")}
+    except Fail:
+        live_agents = {}
+    want = workflow_step_keys({"steps": build_steps(plan, host, IdMap(live_agents), create=False)})
+    try:
+        live = multica.json(["workflow", "get", install["workflow"]])
+    except Fail as exc:
+        say(f"  MISSING workflow {install['workflow']}: {str(exc).splitlines()[0][:80]}")
+        return 1
+    have = workflow_step_keys(live)
+    missing = sorted(want - have)
+    say(f"  {'OK  ' if not missing else 'FAIL'} {install['workflow']:<8} {len(have)} step(s)"
+        + (f"; missing {', '.join(missing[:6])}" if missing else ""))
+    failed = 1 if missing else 0
+    for target in install_targets(host, args):
+        project_id = resolve_project(multica, target)
+        if not project_id:
+            say(f"  MISSING  {target:<12} project does not exist; run install")
+            failed = 1
+            continue
+        live_name = workflow_name_of(multica.json(["project", "workflow", "get", project_id]))
+        ok = live_name == install["workflow"]
+        say(f"  {'OK  ' if ok else 'FAIL'} {target:<12} {live_name or '(none)'}"
+            + ("" if ok else f" expected {install['workflow']}"))
+        failed += 0 if ok else 1
+    return 1 if failed else 0
+
+
+def cmd_install(host: dict, args, groups, lock) -> int:
+    """Converge one workflow carrying the chain and every loose track.
+
+    A tracker binds one flow to a container, and a container is usually a
+    repository, so "run explore against this repo" cannot mean a second flow. It
+    means a second track inside the same flow: the track is chosen by the status
+    the card enters, and `ask` moves it there for you.
+    """
+    install = load_install()
     if getattr(args, "check", False):
-        return check_projects(host, projections, groups, lock)
-    for entry in projections:
-        say(f"\n== {entry['project']} — {entry.get('why', '')}")
-        if cmd_apply(host, scope_args(args, entry), groups, lock) != 0:
-            return 1
+        return check_install(host, args, groups, lock)
+    scoped = copy.copy(args)
+    scoped.install = True
+    scoped.project = ""
+    scoped.intent = "feature"
+    if cmd_apply(host, scoped, groups, lock) != 0:
+        return 1
+    multica = Multica(host)
+    for target in install_targets(host, args):
+        project_id = resolve_project(multica, target)
+        if not project_id:
+            multica.run(["project", "create", "--title", target,
+                         "--description", f"{install['workflow']}: chain and loose tracks"])
+            project_id = resolve_project(multica, target)
+        if not project_id:
+            raise Fail(f"project {target!r} could not be created or found")
+        multica.run(["project", "workflow", "set", project_id, install["workflow"]])
+        say(f"  = {target} -> {install['workflow']}")
     return 0
 
 
@@ -1459,74 +1638,60 @@ ASK_TEMPLATE = """**Question:** {question}
 **Strategy:** {skill}
 **By when it matters:** {when}
 
-House rules: one skill, one artefact, one page. Cite what you use, or say you do not know.
+House rules: one skill, one artifact, one page. Cite or say you do not know.
 """
 
 
-def ask_chain(host: dict, args, groups) -> int:
-    multica = Multica(host)
-    project_id = resolve_project(multica, "Build")
-    if not project_id:
-        raise Fail("project Build does not exist; run install first")
-    first = groups[0]["id"] if groups else "intake"
-    question = " ".join(args.question).strip()
-    body_path = ROOT / ".stelow-cache" / "ask.md"
-    body_path.parent.mkdir(parents=True, exist_ok=True)
-    body_path.write_text(f"**What is wanted:** {question}\n\n{args.when or ''}".rstrip() + "\n")
-    title = args.title or question[:70]
-    if args.dry_run:
-        say(f"would create {title!r} on Build/{first}")
-        return 0
-    created = multica.json([
-        "issue", "create", "--project", project_id, "--title", title,
-        "--description-file", str(body_path),
-    ])
-    issue_id = str(created.get("id") or "")
-    if not issue_id:
-        raise Fail("the issue was created but its id could not be read")
-    multica.run(["issue", "status", issue_id, first])
-    say(f"{created.get('key') or issue_id}  → Build/{first}")
-    return 0
-
-
-CHAIN_NAMES = ("build", "chain")
+def ask_project(host: dict, args, fallback: str) -> str:
+    """The container a question lands in: the one named, the one in env, or its own."""
+    if getattr(args, "project", None):
+        return str(args.project)
+    env = host["multica"].get("project_id") or ""
+    return env or fallback
 
 
 def cmd_ask(host: dict, args, groups) -> int:
-    """Put one question on a board, with the strategy already named.
+    """Put one question on a track, with the strategy already named.
 
-    `build` opens a card on the eighteen-status chain instead: it lands in the
-    first column, not in `todo`, because a card in `todo` has no handler and does
-    nothing while looking alive.
+    The track is chosen by the status the card enters, which is the only way one
+    workflow can hold several shapes: `build` lands on `intake`, a loose track
+    lands on its `run` column, because a question asked through this command wants
+    an answer rather than a triage step.
     """
-    if args.board in CHAIN_NAMES:
-        return ask_chain(host, args, groups)
-    board = load_board(args.board)
-    skill = args.skill or ""
-    if skill:
-        prefix = board["skill_prefix"]
-        if not skill.startswith(prefix):
-            skill = prefix + skill
-        if skill not in {entry["skill"] for entry in board["menu"]}:
-            names = ", ".join(sorted(entry["skill"].replace(prefix, "") for entry in board["menu"]))
-            raise Fail(f"{skill} is not on the {args.board} menu. On it: {names}")
+    track = str(args.board)
+    entry = track_entry(track)
     multica = Multica(host)
-    project_id = resolve_project(multica, board["project"])
-    if not project_id:
-        raise Fail(f"project {board['project']} does not exist; run install first")
-    run_column = next((c["id"] for c in board["columns"] if not c.get("gate")), "")
     question = " ".join(args.question).strip()
+    skill = ""
+    if track == "build":
+        project = ask_project(host, args, "stelow")
+        body = f"**What is wanted:** {question}\n\n{args.when or ''}".rstrip() + "\n"
+    else:
+        board = load_board(track)
+        project = ask_project(host, args, board["project"])
+        skill = args.skill or ""
+        if skill:
+            prefix = board["skill_prefix"]
+            if not skill.startswith(prefix):
+                skill = prefix + skill
+            if skill not in {item["skill"] for item in board["menu"]}:
+                names = ", ".join(sorted(item["skill"].replace(prefix, "") for item in board["menu"]))
+                raise Fail(f"{skill} is not on the {track} menu. On it: {names}")
+        body = ASK_TEMPLATE.format(
+            question=question,
+            skill=skill or "(the runner picks from the menu and says why)",
+            when=args.when or "when the decision is needed",
+        )
+    project_id = resolve_project(multica, project)
+    if not project_id:
+        raise Fail(f"project {project!r} does not exist; run install --all-projects first")
+    title = args.title or question[:70]
+    if args.dry_run:
+        say(f"would create {title!r} on {project}/{entry} with strategy={skill or 'the chain decides'}")
+        return 0
     body_path = ROOT / ".stelow-cache" / "ask.md"
     body_path.parent.mkdir(parents=True, exist_ok=True)
-    body_path.write_text(ASK_TEMPLATE.format(
-        question=question,
-        skill=skill or "(the runner picks from the menu and says why)",
-        when=args.when or "when the decision is needed",
-    ))
-    title = args.title or (question[:70] + ("…" if len(question) > 70 else ""))
-    if args.dry_run:
-        say(f"would create {title!r} on {board['project']}/{run_column} with strategy={skill or 'runner picks'}")
-        return 0
+    body_path.write_text(body)
     created = multica.json([
         "issue", "create", "--project", project_id, "--title", title,
         "--description-file", str(body_path),
@@ -1534,9 +1699,40 @@ def cmd_ask(host: dict, args, groups) -> int:
     issue_id = str(created.get("id") or "")
     if not issue_id:
         raise Fail("the issue was created but its id could not be read")
-    multica.run(["issue", "status", issue_id, run_column])
-    say(f"{created.get('key') or issue_id}  → {board['project']}/{run_column}  strategy={skill or 'runner picks'}")
+    multica.run(["issue", "status", issue_id, entry])
+    say(f"{created.get('key') or issue_id}  -> {project}/{entry}  strategy={skill or 'the chain decides'}")
     return 0
+
+
+STATUS_COLORS = {
+    "backlog": "#6b7280",
+    "unstarted": "#9ca3af",
+    "started": "#3b82f6",
+    "done": "#10b981",
+    "closed": "#ef4444",
+}
+
+
+def ensure_statuses(multica: Multica, plan: dict) -> int:
+    """Workspace statuses first, then the workflow that wires them.
+
+    A workflow is a graph over workspace-level statuses, and a step pointing at a
+    status created in the same request is rejected. Creating them first also means
+    replacing a workflow never drops a column a card is sitting in.
+    """
+    live = {str(row.get("key") or "") for row in rows_of(multica.json(["issue-status", "list"]), "issue-status list")}
+    added = 0
+    for column in plan["columns"]:
+        key = str(column["id"])
+        if not key or key in live:
+            continue
+        category = str(column.get("category") or "started")
+        multica.run([
+            "issue-status", "create", "--key", key, "--name", str(column.get("label") or key),
+            "--category", category, "--color", STATUS_COLORS.get(category, "#3b82f6"),
+        ])
+        added += 1
+    return added
 
 
 def cmd_apply(host: dict, args, groups, lock) -> int:
@@ -1561,7 +1757,10 @@ def cmd_apply(host: dict, args, groups, lock) -> int:
         agent_ids[agent_name(host, agent["agent"])] = ensure_agent(
             multica, host, agent["agent"], agent["skills"], skill_ids)
     exists = plan["workflow"] in multica.workflows()
-    steps = build_steps(plan, host, agent_ids, create=not exists)
+    added = ensure_statuses(multica, plan)
+    if added:
+        say(f"  + {added} workspace status(es) created before the workflow")
+    steps = build_steps(plan, host, agent_ids, create=False)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
         json.dump(steps, handle, indent=2)
         steps_path = handle.name
@@ -1723,8 +1922,11 @@ def main(argv: list[str]) -> int:
     apply_cmd = sub.add_parser("apply", help="converge the workspace", parents=[common])
     apply_cmd.add_argument("--board", help="converge boards/<name>.json instead of the stage chain")
     apply_cmd.add_argument("--all", action="store_true", help="converge every project in config/projects.json")
-    install_cmd = sub.add_parser("install", help="converge the three boards: build, explore, research", parents=[common])
-    install_cmd.add_argument("--check", action="store_true", help="verify each project and its workflow, writing nothing")
+    install_cmd = sub.add_parser(
+        "install", help="converge one workflow that carries the chain and every loose track", parents=[common])
+    install_cmd.add_argument("--check", action="store_true", help="verify the workflow and the projects, writing nothing")
+    install_cmd.add_argument("--all-projects", dest="all_projects", action="store_true",
+                             help="attach the workflow to every project, as one project per repository")
     ask_cmd = sub.add_parser("ask", help="put one question on a board, with the strategy named", parents=[common])
     ask_cmd.add_argument("board", help="explore or research")
     ask_cmd.add_argument("question", nargs="+", help="the question, in one sentence")

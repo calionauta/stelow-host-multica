@@ -4,6 +4,47 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.2.0] - 2026-11-15
+
+**Breaking, deliberately.** Three projects named Build/Explore/Research was the
+wrong answer to the right question. A tracker binds one flow to a container, and a
+container is a repository, so three boards meant three containers per repository
+and a triage step before anything ran.
+
+### Changed
+
+- **One workflow, three tracks.** `config/install.json` declares the workflow
+  `stelow` and the tracks `build` / `explore` / `research`; `install` converges one
+  flow whose status keys carry the track (`explore_run`), and attaches it to the
+  projects you name — `install --all-projects` for one project per repository. A
+  card picks its track by the status it enters, and `ask` moves it there.
+
+- **`ask` lands in the container you are working in**: `--project`, else the
+  configured project, else the track's own. The container is the repository, not
+  the track.
+
+- **Statuses are created before the workflow that wires them.** A step pointing at
+  a status created in the same request is rejected, and a replaced workflow used to
+  drop a column a card was sitting in. `ensure_statuses` fixes both, and status keys
+  use underscores because keys only admit lowercase letters, digits and `_`.
+
+- **`install --check` compares steps, not just names**: every declared status must
+  be in the live workflow, and every named project must point at it.
+
+### Fixed
+
+- The chain's last column handed off to the first loose column, because the linear
+  default does not know where a track ends. It ends at `done` now.
+
+- `IdMap` stands in for an agent id that does not exist yet, so a check can compare
+  steps on a workspace mid-install instead of raising.
+
+### Removed
+
+- `config/projects.json` and the per-board install path. `apply --board` still
+  converges a single board for a workspace that genuinely wants a separate
+  container; it is no longer the recommended shape.
+
 ## [0.1.13] - 2026-11-15
 
 ### Fixed
