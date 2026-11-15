@@ -95,6 +95,16 @@ def load_host(path: Path) -> dict:
     and leave config/host.json as the template it is.
     """
     cfg = read_json(path, "config/host.json")
+    # What one workspace chose — the gate owner, a project id — belongs to that
+    # workspace, not to the template everyone clones. The tracked file stays empty so
+    # `git status` is clean and a fresh clone cannot inherit somebody's settings.
+    local = Path(path).with_name("host.local.json")
+    if local.exists():
+        for section, values in read_json(local, "config/host.local.json").items():
+            if isinstance(values, dict):
+                cfg.setdefault(section, {}).update(values)
+            else:
+                cfg[section] = values
     for section in ("stelow", "multica", "agents"):
         if section not in cfg:
             raise Fail(f"config/host.json is missing '{section}'")
@@ -1301,6 +1311,44 @@ def status_names(live) -> dict[str, str]:
     return {str(r.get("key") or ""): str(r.get("name") or "") for r in rows}
 
 
+def members(live) -> list[dict]:
+    """The people in this workspace: the only candidates a human gate can name."""
+    try:
+        return rows_of(live.json(["workspace", "member", "list"]), "workspace member list")
+    except Fail:
+        return []
+
+
+def member_user_id(row: dict) -> str:
+    """The id a gate handler wants.
+
+    The member list carries two ids: the membership row's own `id` and the `user_id`
+    of the person behind it. Only `user_id` is what the tracker calls the person — the
+    same id the issue carries as `creator_id` — and a gate handed the membership id is
+    a gate handed a stranger: it is accepted, and it assigns nobody.
+    """
+    return str(row.get("user_id") or row.get("id") or "")
+
+
+def pick_member(rows: list[dict], wants: str) -> dict:
+    """One member by exact name, email, or unambiguous id prefix."""
+    wants = wants.strip().lower()
+    if not wants:
+        raise Fail("which member? run `stelow-host human` to list them")
+    exact = [r for r in rows
+             if str(r.get("name") or "").lower() == wants
+             or str(r.get("email") or "").lower() == wants]
+    if len(exact) == 1:
+        return exact[0]
+    prefixed = [r for r in rows if member_user_id(r).lower().startswith(wants)]
+    if len(prefixed) == 1:
+        return prefixed[0]
+    if len(exact) > 1 or len(prefixed) > 1:
+        names = ", ".join(str(r.get("name") or member_user_id(r)) for r in exact or prefixed)
+        raise Fail(f"{wants!r} matches more than one member ({names}): be exact")
+    raise Fail(f"no member matches {wants!r}: run `stelow-host human` to list them")
+
+
 def gate_drift(steps: list[dict], want: str) -> list[str]:
     """Human gates that do not name their member.
 
@@ -1462,6 +1510,35 @@ def declared_strategy(issue: dict) -> str:
     """
     found = re.search(r"\*\*Strategy:\*\*\s*([A-Za-z0-9-]+)", str(issue.get("description") or ""))
     return found.group(1) if found else ""
+
+
+def cmd_human(host: dict, args) -> int:
+    """Show, or choose, the person the human gates belong to."""
+    live = Multica(host)
+    rows = members(live)
+    if not rows:
+        raise Fail("could not read the workspace members: is the CLI authorized? (`multica auth status`)")
+    current = str((host.get("human") or {}).get("member_id") or "")
+    if not getattr(args, "member", ""):
+        for row in rows:
+            mark = "*" if member_user_id(row) == current else " "
+            say(f"{mark} {str(row.get('name') or '?'):<20} {member_user_id(row):<38} "
+                f"{str(row.get('role') or ''):<8} {row.get('email') or ''}")
+        if current and not any(member_user_id(r) == current for r in rows):
+            say(f"\n! the configured owner {current} is not a member of this workspace")
+        say("")
+        say("* owns the human gates" if current else "nobody owns the human gates yet: stelow-host human <name>")
+        return 0
+    row = pick_member(rows, args.member)
+    picked = member_user_id(row)
+    path = ROOT / "config" / "host.local.json"
+    local = read_json(path, "config/host.local.json") if path.exists() else {}
+    local.setdefault("human", {})["member_id"] = picked
+    path.write_text(json.dumps(local, indent=2) + "\n", encoding="utf-8")
+    say(f"wrote {path.relative_to(ROOT)} (git-ignored: this is the workspace's choice, not the template)")
+    say(f"human gates now belong to {row.get('name')} ({picked})")
+    say("next: stelow-host apply  (hands the live gate steps over to that member)")
+    return 0
 
 
 def cmd_park(host: dict, args) -> int:
@@ -1663,6 +1740,12 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     want = human_member(host)
                 except Fail:
                     want = ""
+                known_members = {member_user_id(r) for r in members(live)} if want else set()
+                owns = bool(known_members) and want in known_members
+                check("the gate owner is a workspace member", owns,
+                      (f"{want} is not a member here — pick one with `stelow-host human <name>`"
+                       if want else "no member owns the gates: run `stelow-host human <name>`")
+                      if not owns else "")
                 drifted = gate_drift(live_steps(live, chain["workflow"]), want) if want else []
                 check("every gate names the person who owns it", not drifted,
                       "handed to a role, so nobody is assigned: " + ", ".join(drifted[:4])
@@ -2336,6 +2419,10 @@ def main(argv: list[str]) -> int:
     sub.add_parser("status", help="compact live summary", parents=[common])
     card = sub.add_parser("card", help="what a card kept, and where it stopped", parents=[common])
     card.add_argument("issue", help="issue id or key")
+    human = sub.add_parser("human", help="show, or choose, the person the human gates belong to",
+                           parents=[common])
+    human.add_argument("member", nargs="?", default="",
+                       help="member name, email, or id prefix; omit to list them")
     park = sub.add_parser("park", help="mark a card as waiting on a person, and assign it to them",
                           parents=[common])
     park.add_argument("issue", help="issue id or key")
@@ -2375,6 +2462,8 @@ def main(argv: list[str]) -> int:
             return cmd_card(host, args, groups)
         if args.command == "park":
             return cmd_park(host, args)
+        if args.command == "human":
+            return cmd_human(host, args)
         if args.command == "doctor":
             return cmd_doctor(host, args, groups, lock)
         raise Fail(f"unknown command {args.command}")

@@ -4,6 +4,26 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.7.0] - 2026-11-15
+
+### Added
+
+- **`stelow-host human [name]` — how you choose who owns the gates.** With no
+  argument it lists the workspace members and marks the current owner; with a name,
+  email, or id prefix it writes the choice and tells you to `apply`. Before this the
+  only way in was an undocumented env var.
+- The choice is stored in **`config/host.local.json`** (git-ignored), not in the
+  tracked template: a gate owner is a property of one workspace, and a clone that
+  inherited somebody's UUID would point gates at a stranger.
+- `doctor` gained **"the gate owner is a workspace member"**, which catches the typo
+  or stale id that otherwise fails silently at the first gate.
+
+### Fixed
+
+- The gate handler takes the member's **`user_id`**, not the membership row's `id`.
+  The workspace API returns both, the tracker accepts either, and only one of them is
+  a person: with the membership id the gate assigns nobody.
+
 ## [0.6.0] - 2026-11-15
 
 ### Fixed

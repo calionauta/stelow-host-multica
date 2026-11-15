@@ -218,6 +218,11 @@ class FakeMultica:
                 return 1, "", "issue not found"
             issue["status"] = args[3]
             return 0, json.dumps(issue), ""
+        if args[:3] == ["workspace", "member", "list"]:
+            return 0, json.dumps(self.state.setdefault("members", [
+                {"id": "m-1", "user_id": "u-1", "name": "calionauta", "role": "owner",
+                 "email": "owner@example.com"},
+            ])), ""
         if args[:2] == ["issue-status", "list"]:
             over = self.state.setdefault("status_names", {})
             return 0, json.dumps([{"key": key, "name": over.get(key, key)}
@@ -607,6 +612,38 @@ class TestGateOwnership(HostCase):
         self.host["human"]["member_id"] = ""
         with self.assertRaises(HOST.Fail):
             HOST.human_member(self.host)
+
+
+class TestHumanOwner(HostCase):
+    def test_the_gate_owner_is_the_user_id_not_the_membership_id(self):
+        # Catches: writing the membership id, which the tracker accepts and assigns
+        # to nobody — the same silent gate as `project_lead`.
+        row = {"id": "m-1", "user_id": "u-1", "name": "calionauta"}
+        self.assertEqual(HOST.member_user_id(row), "u-1")
+
+    def test_a_member_is_found_by_name(self):
+        rows = [{"user_id": "u-1", "name": "calionauta"}, {"user_id": "u-2", "name": "someone"}]
+        self.assertEqual(HOST.member_user_id(HOST.pick_member(rows, "calionauta")), "u-1")
+
+    def test_an_id_prefix_is_enough(self):
+        rows = [{"user_id": "f4348894-abc", "name": "calionauta"}]
+        self.assertEqual(HOST.member_user_id(HOST.pick_member(rows, "f434")), "f4348894-abc")
+
+    def test_two_matching_members_are_refused(self):
+        """Guessing here hands a gate to the wrong person, silently."""
+        rows = [{"user_id": "u-1", "name": "ana"}, {"user_id": "u-2", "name": "ana"}]
+        with self.assertRaises(HOST.Fail):
+            HOST.pick_member(rows, "ana")
+
+    def test_choosing_writes_the_owner_to_the_git_ignored_local_file(self):
+        # Catches: writing a real member id into the tracked template, which every
+        # clone would then inherit and CI would see as a change.
+        code = HOST.cmd_human(self.host, types.SimpleNamespace(member="calionauta"))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads((self.tmp / "config" / "host.json").read_text())["human"]["member_id"], "")
+        local = json.loads((self.tmp / "config" / "host.local.json").read_text())
+        self.assertEqual(local["human"]["member_id"], "u-1")
+        self.assertEqual(HOST.load_host(self.tmp / "config" / "host.json")["human"]["member_id"], "u-1")
 
 
 class TestRedProof(HostCase):

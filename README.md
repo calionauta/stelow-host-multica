@@ -78,6 +78,7 @@ two. [`docs/boards.md`](docs/boards.md) explains the lanes and how to add one.
 ```bash
 ./bin/stelow-host card <issue>     # what a card kept, and what it still owes
 ./bin/stelow-host park <issue>     # mark a card as waiting on a person, and assign it to them
+./bin/stelow-host human [name]     # who owns the human gates: list the workspace, or choose one
 ./bin/stelow-host doctor --fix     # mark the cards that wait on a person
 ./bin/board-check.sh               # the above on a timer: rotates its log, counts failures
 ```
