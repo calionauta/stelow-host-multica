@@ -37,7 +37,8 @@ slugify from the column label, or updates diverge from creation forever).
 
 ```bash
 # fill multica.workspace_id, multica.runtime_id and (optionally) multica.project_id
-./bin/stelow-host sync                     # pin stages.yaml; prints the sha
+./bin/stelow-host sync                     # pin stages.yaml + stage-catalog.json
+./bin/stelow-host doctor                   # environment, pin, and stage ownership
 ./bin/stelow-host plan --intent feature    # what would change; writes nothing
 ./bin/stelow-host apply --intent feature   # converge
 ./bin/stelow-host verify                   # exit 1 if the workspace drifted
@@ -46,6 +47,11 @@ slugify from the column label, or updates diverge from creation forever).
 `apply` is convergent: run it twice and the second run only updates. Skills are
 imported once and then refreshed from source (`--refresh-skills`); agents and the
 workflow are updated in place, never duplicated.
+
+`doctor` is the check to run first: it verifies python, the `multica` binary,
+the workspace ids, the pin, that the skills are publicly importable, and — the
+one that matters — that **every stage's owning skill is loaded by the agent that
+handles that stage**. `--offline` skips the network and live-workspace checks.
 
 ## The mapping
 
@@ -80,12 +86,13 @@ receipt and advances, or parks the issue with a reason.
 
 ## Honest status
 
-- **Verified here**: the stage/intent parser against the real
-  `calionauta/stelow@main`; the mapping and convergence logic against an
-  in-process fake of the CLI (18 tests, `python3 tests/run.py`).
+- **Verified here**: the stage/intent/catalog parser against the real
+  `calionauta/stelow@main`; `doctor` end to end; the mapping, ownership and
+  convergence logic against an in-process fake of the CLI (27 tests,
+  `python3 tests/run.py`).
 - **Not yet verified**: a live workspace. The exact CLI surface was read from
   Multica's source (`server/cmd/multica`), not from a running instance. Run
-  `plan` and `verify` against your workspace before trusting `apply`, and read
+  `doctor` and `plan` against your workspace before trusting `apply`, and read
   `docs/operations.md` for the first-run checks.
 
 ## Related

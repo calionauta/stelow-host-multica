@@ -13,6 +13,7 @@ import importlib.machinery
 import importlib.util
 import json
 import shutil
+import sys
 import tempfile
 import types
 import unittest
@@ -23,6 +24,7 @@ LOADER = importlib.machinery.SourceFileLoader("stelow_host", str(REPO / "bin" / 
 SPEC = importlib.util.spec_from_loader("stelow_host", LOADER)
 HOST = importlib.util.module_from_spec(SPEC)
 LOADER.exec_module(HOST)
+REAL_MULTICA = HOST.Multica  # setUp() swaps HOST.Multica for the fake; keep the real one
 
 INTENTS = {
     "new-product": ["triage", "select", "setup", "context", "shape", "critique", "gate", "scope",
@@ -36,6 +38,31 @@ INTENTS = {
     "refactor": ["triage", "select", "setup", "context", "planning", "plan-gate",
                  "execution", "verification", "audit"],
     "investigate": ["triage", "select", "setup", "context", "audit"],
+}
+
+
+STAGE_CATALOG = {
+    "version": 1,
+    "stages": [
+        {"id": "triage", "skill": "stelow-workflow-orchestrator"},
+        {"id": "select", "skill": "stelow-workflow-orchestrator"},
+        {"id": "setup", "skill": "stelow-workflow-orchestrator"},
+        {"id": "context", "skill": "stelow-workflow-orchestrator"},
+        {"id": "shape", "skill": "stelow-workflow-shape-up"},
+        {"id": "critique", "skill": "stelow-workflow-plan-critique"},
+        {"id": "gate", "skill": "stelow-workflow-orchestrator", "requires_approval": True},
+        {"id": "scope", "skill": "stelow-product-scope-mapping"},
+        {"id": "interface", "skill": "stelow-workflow-interface-contrast"},
+        {"id": "int-gate", "skill": "stelow-workflow-orchestrator", "requires_approval": True},
+        {"id": "selection", "skill": "stelow-workflow-orchestrator"},
+        {"id": "architecture", "skill": "stelow-workflow-orchestrator"},
+        {"id": "planning", "skill": "stelow-workflow-tech-planning"},
+        {"id": "plan-gate", "skill": "stelow-workflow-orchestrator", "requires_approval": True},
+        {"id": "execution", "skill": "stelow-workflow-scope-executor"},
+        {"id": "verification", "skill": "stelow-workflow-testing-execution"},
+        {"id": "diff-gate", "skill": "stelow-workflow-orchestrator", "requires_approval": True},
+        {"id": "audit", "skill": "stelow-workflow-execution-critique"},
+    ],
 }
 
 
@@ -188,14 +215,18 @@ class HostCase(unittest.TestCase):
 
     # helpers -----------------------------------------------------------
 
-    def write_stages(self, intents=INTENTS):
+    def write_stages(self, intents=INTENTS, catalog=STAGE_CATALOG):
         text = stages_yaml(intents)
-        cache = self.tmp / ".stelow-cache" / "stages.yaml"
-        cache.write_text(text, encoding="utf-8")
+        cat_text = json.dumps(catalog)
+        cache = self.tmp / ".stelow-cache"
+        (cache / "stages.yaml").write_text(text, encoding="utf-8")
+        (cache / "stage-catalog.json").write_text(cat_text, encoding="utf-8")
         (self.tmp / "stelow.lock.json").write_text(json.dumps({
             "repo": self.host_repo(),
             "ref": self.host_ref(),
             "stages_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "catalog_sha256": hashlib.sha256(cat_text.encode()).hexdigest(),
+            "owners": {s["id"]: s["skill"] for s in catalog["stages"] if s.get("skill")},
         }), encoding="utf-8")
 
     def host_repo(self):
@@ -204,9 +235,10 @@ class HostCase(unittest.TestCase):
     def host_ref(self):
         return json.loads((self.tmp / "config" / "host.json").read_text())["stelow"]["ref"]
 
-    def args(self, intent="feature", gates="human", project="proj-1", migrate=False, refresh=False):
+    def args(self, intent="feature", gates="human", project="proj-1", migrate=False, refresh=False, offline=False):
         return types.SimpleNamespace(intent=intent, gates=gates, project=project,
-                                     migrate=migrate, refresh_skills=refresh, json=False)
+                                     migrate=migrate, refresh_skills=refresh, json=False,
+                                     offline=offline)
 
     def apply(self, **kwargs):
         return HOST.cmd_apply(self.host, self.args(**kwargs), self.groups, self.lock)
@@ -357,6 +389,60 @@ class TestApply(HostCase):
             self.apply()
         self.assertIn("runtime_id", str(caught.exception))
         self.assertEqual(self.fp().calls, [], "preflight must run before any write")
+
+
+class TestDoctor(HostCase):
+    def test_doctor_passes_offline_on_a_clean_config(self):
+        """The clean case must be green, or nobody reads the red one."""
+        self.host["multica"]["bin"] = sys.executable
+        code = HOST.cmd_doctor(self.host, self.args(offline=True), self.groups, self.lock)
+        self.assertEqual(code, 0)
+
+    def test_doctor_fails_without_a_runtime_id(self):
+        """A missing runtime id only shows up when the first agent tries to start."""
+        self.host["multica"]["bin"] = sys.executable
+        self.host["multica"]["runtime_id"] = ""
+        code = HOST.cmd_doctor(self.host, self.args(offline=True), self.groups, self.lock)
+        self.assertEqual(code, 1)
+
+
+class TestRedProof(HostCase):
+    def test_rows_refuses_an_ambiguous_payload(self):
+        """Two lists in one payload: picking one blindly decides create-vs-update
+        against the wrong rows, which duplicates every agent on the next run."""
+        with self.assertRaises(HOST.Fail):
+            REAL_MULTICA._rows({"rows": [{"id": "a"}], "meta": [{"id": "b"}]}, "agent list")
+
+    def test_rows_refuses_non_object_rows(self):
+        with self.assertRaises(HOST.Fail):
+            REAL_MULTICA._rows(["not-a-row"], "skill list")
+
+    def test_duplicate_names_are_refused(self):
+        """Last-wins on a name collision silently targets the wrong agent."""
+        with self.assertRaises(HOST.Fail):
+            REAL_MULTICA._by_name(
+                [{"id": "1", "name": "stelow:build"}, {"id": "2", "name": "stelow:build"}],
+                "agent list",
+            )
+
+    def test_a_stage_whose_owner_agent_does_not_load_it_is_reported(self):
+        """The drift that matters: stages.yaml repoints a stage at a new skill and
+        the host keeps dispatching it to an agent that has never read it."""
+        plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], "feature", "human", "")
+        owners = dict(self.lock["owners"])
+        self.assertEqual(HOST.owner_gaps(plan, owners), [])
+        owners["shape"] = "stelow-brand-new-skill"
+        gaps = HOST.owner_gaps(plan, owners)
+        self.assertEqual(len(gaps), 1, gaps)
+        self.assertIn("shape", gaps[0])
+
+    def test_a_gate_stage_owner_must_be_on_the_gatekeeper(self):
+        plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], "feature", "agent", "")
+        owners = dict(self.lock["owners"])
+        owners["plan-gate"] = "stelow-gatekeeping-skill"
+        gaps = HOST.owner_gaps(plan, owners)
+        self.assertEqual(len(gaps), 1, gaps)
+        self.assertIn("gatekeeper", gaps[0])
 
 
 class TestVerify(HostCase):

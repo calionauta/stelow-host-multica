@@ -70,3 +70,25 @@ delete them when you are sure (`multica agent delete`, `multica skill delete`).
 | skills imported but the agent ignores them | the agent was created before the skill existed | `apply` again (`agent skills set` replaces) |
 | `skill import` 404 | `calionauta/stelow` is not public, or `ref` is stale | `sync --ref <tag>` |
 | `verify` reports instruction drift | you edited a column in the UI | `apply` — the repo is the source of truth |
+
+## Run `doctor` before `apply`
+
+`doctor` is the cheapest way to find out why a run is about to fail. It checks,
+in order: python, the `multica` binary on `PATH`, `workspace_id` and
+`runtime_id`, that the stage model is pinned, that the stage **owners** were read
+from the catalog, that every stage's owning skill is loaded by the agent that
+handles that stage, that the skills are publicly importable, and that the CLI is
+authorized (`--offline` skips the last two).
+
+The owner check is the one that catches real drift. `stage-catalog.json` says
+which skill each stage dispatches to; a column's agent must load that skill, or
+the stage is dispatched to an agent that has never read its instructions. Two
+edits upstream trip it:
+
+- stelow repoints a stage at a new skill (the check names the stage and the
+  agent);
+- stelow adds a stage the host has no column for (`plan` fails first, naming the
+  stage).
+
+When it trips, change `config/columns.json` — never the pinned cache, and never
+the stage list, which is not this repo's to keep.

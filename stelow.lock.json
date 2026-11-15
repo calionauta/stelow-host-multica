@@ -1,5 +1,6 @@
 {
-  "fetched_at": "2026-11-15T11:56:37Z",
+  "catalog_sha256": "566eb71cd5fdc5737e8b5b7e246663bc558ad07dd5778a3ef67ea0e88a13d4d8",
+  "fetched_at": "2026-11-15T12:28:51Z",
   "ref": "main",
   "repo": "calionauta/stelow",
   "stages_sha256": "ae95393e8aed5c0e45820a110944b94729bcec558acd26043ade7a15c3ea77d0"

@@ -21,6 +21,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -33,6 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / ".stelow-cache"
 LOCK = ROOT / "stelow.lock.json"
 STAGES_MEMBER = "skills/stelow-workflow-orchestrator/stages.yaml"
+CATALOG_MEMBER = "skills/stelow-workflow-orchestrator/stage-catalog.json"
 
 
 def set_root(path: Path) -> None:
@@ -164,50 +166,102 @@ def parse_intents(text: str) -> dict[str, list[str]]:
     return intents
 
 
-def fetch_stages(repo: str, ref: str) -> str:
+def fetch_upstream(repo: str, ref: str) -> dict[str, str]:
+    """Download the tarball once and pull out the two files this host reads.
+
+    The catalog is generated upstream from stages.yaml. Reading both keeps the
+    host from parsing YAML for the stage -> skill ownership it must never guess.
+    """
     url = f"https://codeload.github.com/{repo}/tar.gz/{ref}"
     try:
         with urllib.request.urlopen(url, timeout=90) as resp:  # noqa: S310 (pinned https host)
             blob = resp.read()
     except OSError as exc:
         raise Fail(f"could not download {repo}@{ref}: {exc}")
+    members = {"stages": STAGES_MEMBER, "catalog": CATALOG_MEMBER}
+    out: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
-            members = [m for m in archive.getmembers() if m.name.endswith(STAGES_MEMBER)]
-            if not members:
-                raise Fail(f"{STAGES_MEMBER} is not in {repo}@{ref}")
-            handle = archive.extractfile(members[0])
-            if handle is None:
-                raise Fail(f"{STAGES_MEMBER} is not a regular file in {repo}@{ref}")
-            return handle.read().decode("utf-8")
+            names = {m.name: m for m in archive.getmembers()}
+            for key, member in members.items():
+                hit = next((m for n, m in names.items() if n.endswith(member)), None)
+                if hit is None:
+                    raise Fail(f"{member} is not in {repo}@{ref}")
+                handle = archive.extractfile(hit)
+                if handle is None:
+                    raise Fail(f"{member} is not a regular file in {repo}@{ref}")
+                out[key] = handle.read().decode("utf-8")
     except (tarfile.TarError, OSError) as exc:
         raise Fail(f"could not unpack {repo}@{ref}: {exc}")
+    return out
+
+
+def parse_owners(text: str) -> dict[str, str]:
+    """stage id -> the skill the catalog dispatches to for that stage."""
+    try:
+        catalog = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise Fail(f"stage-catalog.json is not JSON: {exc}")
+    stages = catalog.get("stages") if isinstance(catalog, dict) else None
+    if not isinstance(stages, list) or not stages:
+        raise Fail("stage-catalog.json has no stages[]")
+    owners: dict[str, str] = {}
+    for stage in stages:
+        if isinstance(stage, dict) and stage.get("id") and stage.get("skill"):
+            owners[str(stage["id"])] = str(stage["skill"])
+    if not owners:
+        raise Fail("stage-catalog.json names no stage owners")
+    return owners
 
 
 def ensure_stages(host: dict, force: bool = False) -> dict:
-    """Return {intents, sha, ref} from a pinned copy of stages.yaml."""
+    """Return {intents, owners, sha, ref} from a pinned copy of the stage model."""
     repo = host["stelow"]["repo"]
     ref = host["stelow"]["ref"]
-    path = CACHE / "stages.yaml"
+    stages_path = CACHE / "stages.yaml"
+    catalog_path = CACHE / "stage-catalog.json"
     lock = read_json(LOCK, "stelow.lock.json") if LOCK.exists() else {}
-    if path.exists() and not force and lock.get("ref") == ref and lock.get("repo") == repo:
-        text = path.read_text(encoding="utf-8")
-        if hashlib.sha256(text.encode()).hexdigest() == lock.get("stages_sha256"):
-            return {"intents": parse_intents(text), "sha": lock["stages_sha256"], "ref": ref}
-    text = fetch_stages(repo, ref)
-    sha = hashlib.sha256(text.encode()).hexdigest()
+    cached = (
+        stages_path.exists()
+        and catalog_path.exists()
+        and not force
+        and lock.get("ref") == ref
+        and lock.get("repo") == repo
+    )
+    if cached:
+        stages_text = stages_path.read_text(encoding="utf-8")
+        catalog_text = catalog_path.read_text(encoding="utf-8")
+        if hashlib.sha256(stages_text.encode()).hexdigest() == lock.get("stages_sha256") and (
+            hashlib.sha256(catalog_text.encode()).hexdigest() == lock.get("catalog_sha256")
+        ):
+            return {
+                "intents": parse_intents(stages_text),
+                "owners": parse_owners(catalog_text),
+                "sha": lock["stages_sha256"],
+                "ref": ref,
+            }
+    fetched = fetch_upstream(repo, ref)
+    stages_text, catalog_text = fetched["stages"], fetched["catalog"]
     CACHE.mkdir(exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    stages_path.write_text(stages_text, encoding="utf-8")
+    catalog_path.write_text(catalog_text, encoding="utf-8")
+    sha = hashlib.sha256(stages_text.encode()).hexdigest()
     write_json(
         LOCK,
         {
             "repo": repo,
             "ref": ref,
             "stages_sha256": sha,
+            "catalog_sha256": hashlib.sha256(catalog_text.encode()).hexdigest(),
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
-    return {"intents": parse_intents(text), "sha": sha, "ref": ref}
+    return {
+        "intents": parse_intents(stages_text),
+        "owners": parse_owners(catalog_text),
+        "sha": sha,
+        "ref": ref,
+    }
 
 
 def stage_universe(groups: list[dict]) -> dict[str, str]:
@@ -271,21 +325,47 @@ class Multica:
 
     @staticmethod
     def _rows(payload, what: str) -> list[dict]:
+        """Rows out of a CLI payload, without ever guessing which list is meant.
+
+        Liveness decides create-vs-update in `apply`, so a payload this host
+        cannot read must fail loudly: a silent ``[]`` would turn every run into
+        a duplicate create.
+        """
         if isinstance(payload, list):
-            return [r for r in payload if isinstance(r, dict)]
-        if isinstance(payload, dict):
-            for value in payload.values():
-                if isinstance(value, list) and all(isinstance(v, dict) for v in value):
-                    return value
-            if "id" in payload:
+            rows = payload
+        elif isinstance(payload, dict):
+            candidate = [v for v in payload.values() if isinstance(v, list)]
+            if len(candidate) > 1:
+                raise Fail(f"ambiguous {what}: {len(candidate)} lists in the payload")
+            if candidate:
+                rows = candidate[0]
+            elif "id" in payload:
                 return [payload]
-        raise Fail(f"unexpected shape for {what}: {str(payload)[:200]}")
+            else:
+                rows = []
+        else:
+            raise Fail(f"unexpected payload for {what}: {type(payload).__name__}")
+        if not all(isinstance(row, dict) for row in rows):
+            raise Fail(f"{what} returned rows that are not objects")
+        return rows
+
+    @staticmethod
+    def _by_name(rows: list[dict], what: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for row in rows:
+            name, ident = row.get("name"), row.get("id")
+            if not name or not ident:
+                continue
+            if name in out:
+                raise Fail(f"{what} has two entries named {name!r}: refusing to guess which one")
+            out[name] = ident
+        return out
 
     def skills(self) -> dict[str, str]:
-        return {r.get("name"): r.get("id") for r in self._rows(self.json(["skill", "list"]), "skill list") if r.get("name")}
+        return self._by_name(self._rows(self.json(["skill", "list"]), "skill list"), "skill list")
 
     def agents(self) -> dict[str, str]:
-        return {r.get("name"): r.get("id") for r in self._rows(self.json(["agent", "list"]), "agent list") if r.get("name")}
+        return self._by_name(self._rows(self.json(["agent", "list"]), "agent list"), "agent list")
 
     def agent_skill_ids(self, agent_id: str) -> list[str]:
         payload = self.json(["agent", "skills", "list", agent_id])
@@ -298,7 +378,7 @@ class Multica:
         return out
 
     def workflows(self) -> dict[str, str]:
-        return {r.get("name"): r.get("id") for r in self._rows(self.json(["workflow", "list"]), "workflow list") if r.get("name")}
+        return self._by_name(self._rows(self.json(["workflow", "list"]), "workflow list"), "workflow list")
 
     def workflow(self, name: str) -> dict | None:
         code, out, _ = self.run(["workflow", "get", name], can_fail=True)
@@ -500,6 +580,100 @@ def cmd_plan(host: dict, args, groups, lock) -> int:
     return 0
 
 
+def owner_gaps(plan: dict, owners: dict[str, str]) -> list[str]:
+    """Every stage's owning skill must be loaded by the agent that handles it.
+
+    This is the drift alarm that matters most: stelow adds a stage, or points a
+    stage at a new skill, and the host keeps dispatching that stage to an agent
+    that has never read the skill.
+    """
+    by_agent = {a["agent"]: set(a["skills"]) for a in plan["agents"]}
+    gatekeeper = by_agent.get("gatekeeper", set())
+    gaps: list[str] = []
+    for col in plan["columns"]:
+        if col["gate"] and plan["gates"] != "agent":
+            # A human handler reads the gate skill themselves; no agent to check.
+            continue
+        skills = gatekeeper if col["gate"] else by_agent.get(col["agent"], set())
+        for stage in col["stages"]:
+            owner = owners.get(stage)
+            if not owner:
+                gaps.append(f"{col['id']}: stage {stage} has no owner in stage-catalog.json")
+            elif owner not in skills:
+                where = "gatekeeper" if col["gate"] else col["agent"]
+                gaps.append(f"{col['id']}: stage {stage} is owned by {owner}, which agent {where} does not load")
+    return gaps
+
+
+def cmd_doctor(host: dict, args, groups, lock) -> int:
+    checks: list[tuple[str, bool, str]] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        checks.append((name, bool(ok), detail))
+
+    # 1. the tool's own runtime
+    check("python >= 3.9", sys.version_info >= (3, 9), "%d.%d.%d" % sys.version_info[:3])
+
+    # 2. the CLI it drives
+    binary = host["multica"].get("bin") or "multica"
+    found = shutil.which(binary)
+    check("multica on PATH", bool(found), found or f"{binary} not found")
+
+    # 3. config the writes depend on
+    check("workspace_id", bool(host["multica"].get("workspace_id")), "set in config/host.json")
+    check("runtime_id", bool(host["multica"].get("runtime_id")), "agents cannot start without it")
+
+    # 4. the stage model is pinned, and names the stages the host maps
+    check("stages.yaml pinned", bool(lock.get("sha")), str(lock.get("sha"))[:12])
+    owners = lock.get("owners") or {}
+    check("stage owners read", bool(owners), f"{len(owners)} stages")
+
+    # 5. skill ownership lines up with the columns
+    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    gaps = owner_gaps(plan, owners)
+    check("stage owners loaded by their agent", not gaps, "; ".join(gaps[:3]))
+
+    # 6. the upstream skills are publicly importable
+    repo = host["stelow"]["repo"]
+    ref = host["stelow"]["ref"]
+    root = host["stelow"].get("skill_root") or "skills"
+    probe = plan["skills"][0] if plan["skills"] else "stelow-workflow-orchestrator"
+    url = f"https://raw.githubusercontent.com/{repo}/{ref}/{root}/{probe}/SKILL.md"
+    offline = getattr(args, "offline", False)
+    if not offline:
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:  # noqa: S310 (pinned https host)
+                reachable = resp.status == 200
+        except OSError as exc:
+            reachable = False
+            url = f"{url} ({exc})"
+        check("skills publicly importable", reachable, url)
+
+    # 7. the live workspace answers, if the CLI is usable
+    if found and not offline:
+        multica = Multica(host)
+        try:
+            live = multica.skills()
+            check("CLI authorized", True, f"{len(live)} skills visible")
+            missing = [s for s in plan["skills"] if s not in live]
+            check("planned skills installed", not missing, ", ".join(missing[:4]))
+        except Fail as exc:
+            check("CLI authorized", False, str(exc).splitlines()[0][:120])
+    if offline:
+        check("offline", True, "network and live-workspace checks skipped")
+
+    width = max(len(name) for name, _, _ in checks)
+    for name, ok, detail in checks:
+        say(f"  {'OK ' if ok else 'FAIL'}  {name:{width}s}  {detail}")
+    failed = [name for name, ok, _ in checks if not ok]
+    say()
+    if failed:
+        say(f"doctor: {len(failed)} check(s) failed")
+        return 1
+    say("doctor: all checks passed")
+    return 0
+
+
 def ensure_skill(multica: Multica, host: dict, skill: str, refresh: bool) -> None:
     repo = host["stelow"]["repo"]
     ref = host["stelow"]["ref"]
@@ -694,6 +868,7 @@ def main(argv: list[str]) -> int:
     common.add_argument("--json", action="store_true")
     common.add_argument("--refresh-skills", action="store_true", help="re-pull imported skills from their source")
     common.add_argument("--migrate", action="store_true", help="pass --map for built-in statuses when switching the project")
+    common.add_argument("--offline", action="store_true", help="skip checks that need the network or the live workspace")
 
     parser = argparse.ArgumentParser(prog="stelow-host", description="Provision stelow onto Multica.")
     parser.add_argument("--config", default=str(ROOT / "config" / "host.json"))
@@ -703,6 +878,7 @@ def main(argv: list[str]) -> int:
     sub.add_parser("apply", help="converge the workspace", parents=[common])
     sub.add_parser("verify", help="assert the live workspace matches the plan", parents=[common])
     sub.add_parser("status", help="compact live summary", parents=[common])
+    sub.add_parser("doctor", help="check the environment, the pin, and stage ownership", parents=[common])
     args = parser.parse_args(argv)
 
     try:
@@ -725,6 +901,8 @@ def main(argv: list[str]) -> int:
             return cmd_verify(host, args, groups, lock)
         if args.command == "status":
             return cmd_status(host, args, groups, lock)
+        if args.command == "doctor":
+            return cmd_doctor(host, args, groups, lock)
         raise Fail(f"unknown command {args.command}")
     except Fail as exc:
         print(f"stelow-host: {exc}", file=sys.stderr)

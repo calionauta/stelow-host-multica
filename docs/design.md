@@ -72,6 +72,17 @@ that adds a stage cannot silently fall through:
   conditional has to be a handler decision, which is why gate columns exist at
   all rather than folding gates into the stage agents.
 
+## The catalog is read, not copied
+
+`sync` pins two files: `stages.yaml` (routes and intents) and the generated
+`stage-catalog.json` (which skill owns each stage). The second one is what makes
+the *ownership* check possible: `doctor` asserts that the agent handling a stage
+loads that stage's skill, so a stelow release that repoints a stage fails loudly
+here instead of silently dispatching the stage to an agent that never read it.
+
+Neither file is parsed for anything this repo could keep itself. The only local
+opinion is `config/columns.json`: which stages group into which board column.
+
 ## Why a provisioner and not a plugin
 
 The bb host is a plugin because bb needs UI, hooks and card lifecycle. Multica
