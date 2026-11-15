@@ -4,6 +4,25 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.10] - 2026-11-15
+
+### Fixed
+
+- **0.1.9 was tagged and published with its own suite red.** The tests had run,
+  through `| tail -2`, which reports the exit status of `tail`; the pipeline
+  looked green because the last command in it was. The code it shipped is the
+  code that ran against the live workspace, so the boards were real — the gate
+  that was supposed to catch a regression was the thing that broke.
+
+- **`scripts/release.sh`** runs the suite with no pipe in the way, refuses a
+  dirty tree, reads the version from the changelog instead of being told twice,
+  and refuses to re-tag what already exists. `--dry-run` prints the notes only.
+
+- `resolve_project` and the board code used `Multica._rows`, which the tests
+  replace, so a host command depended on a name the test double owns. They use
+  the module-level `rows_of` the alias was already there for, and the fake now
+  answers `project list` / `project create` — the two calls a live apply makes.
+
 ## [0.1.9] - 2026-11-15
 
 ### Fixed

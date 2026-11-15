@@ -103,7 +103,8 @@ class FakeMultica:
 
     def __init__(self, host):
         self.calls = []
-        self.state = {"skills": {}, "agents": {}, "agent_skills": {}, "workflows": {}, "projects": {}}
+        self.state = {"skills": {}, "agents": {}, "agent_skills": {}, "workflows": {}, "projects": {},
+                      "project_titles": {"proj-1": "Proj One"}}
         self.seq = 0
         FakeMultica.last = self
 
@@ -180,6 +181,14 @@ class FakeMultica:
                 normalized.append(entry)
             self.state["workflows"][name] = normalized
             return 0, json.dumps({"name": name, "steps": normalized}), ""
+        if args[:2] == ["project", "list"]:
+            titles = self.state["project_titles"]
+            return 0, json.dumps([{"id": pid, "title": title} for pid, title in titles.items()]), ""
+        if args[:2] == ["project", "create"]:
+            title = args[args.index("--title") + 1]
+            pid = self._next("proj")
+            self.state["project_titles"][pid] = title
+            return 0, json.dumps({"id": pid, "title": title}), ""
         if args[:3] == ["project", "workflow", "get"]:
             return 0, json.dumps({"project_id": args[3], "workflow": self.state["projects"].get(args[3], "default")}), ""
         if args[:3] == ["project", "workflow", "set"]:

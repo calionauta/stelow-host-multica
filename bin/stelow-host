@@ -1095,7 +1095,7 @@ def cmd_card(host: dict, args, groups) -> int:
     issue_id = str(issue.get("id") or args.issue)
     status = str(issue.get("status") or "?")
     present = set()
-    for comment in Multica._rows(live.json(["issue", "comment", "list", issue_id]), "issue comment list"):
+    for comment in rows_of(live.json(["issue", "comment", "list", issue_id]), "issue comment list"):
         for attachment in comment.get("attachments") or []:
             name = str(attachment.get("filename") or "")
             if name:
@@ -1175,7 +1175,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
     if found and not offline and host["multica"].get("project_id"):
         live = Multica(host)
         try:
-            issues = Multica._rows(live.json(["issue", "list"]), "issue list")
+            issues = rows_of(live.json(["issue", "list"]), "issue list")
         except Fail as exc:
             check("board readable", False, str(exc).splitlines()[0][:120])
             issues = None
@@ -1189,19 +1189,19 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     continue
                 status = str(issue.get("status") or "")
                 try:
-                    runs = Multica._rows(live.json(["issue", "runs", issue_id, "--active"]), "issue runs")
+                    runs = rows_of(live.json(["issue", "runs", issue_id, "--active"]), "issue runs")
                 except Fail:
                     runs = []
                 if runs:
                     running.add(issue_id)
                 try:
-                    rows = Multica._rows(live.json(["issue", "label", "list", issue_id]), "issue label list")
+                    rows = rows_of(live.json(["issue", "label", "list", issue_id]), "issue label list")
                 except Fail:
                     rows = []
                 labels[issue_id] = {str(row.get("name") or "") for row in rows if row.get("name")}
                 if status in known:
                     try:
-                        events = Multica._rows(
+                        events = rows_of(
                             live.json(["issue", "timeline", issue_id, "--tail", "200"]), "issue timeline"
                         )
                     except Fail:
@@ -1319,7 +1319,7 @@ def resolve_project(multica: Multica, name: str) -> str:
     that does not exist yet.
     """
     try:
-        rows = Multica._rows(multica.json(["project", "list"]), "project list")
+        rows = rows_of(multica.json(["project", "list"]), "project list")
     except Fail:
         return ""
     for row in rows:
