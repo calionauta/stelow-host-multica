@@ -572,9 +572,14 @@ def agent_name(host: dict, agent: str) -> str:
 
 
 def workflow_name(host: dict, intent: str, gates: str) -> str:
-    prefix = host["defaults"].get("workflow_prefix") or "stelow"
-    name = f"{prefix}-{intent}"
-    return name if gates == "agent" else f"{name}-human"
+    """The declared id of the chain workflow.
+
+    Every variant used to get its own name (`stelow-feature-human`), which was fine
+    while one graph held every shape and became the bug the moment explore and
+    research split off: the chain is one workflow per repository, and what varies
+    with the intent is its columns, not its name.
+    """
+    return str(load_install()["workflows"][0]["id"])
 
 
 def section_map(path: Path) -> dict[str, str]:
@@ -601,6 +606,20 @@ def load_install() -> dict:
     if not path.is_file():
         raise Fail("config/install.json is missing")
     return json.loads(path.read_text())
+
+
+def skills_block(skills: list[str]) -> str:
+    """The skills a step runs, named inside the step that runs them.
+
+    The chain's steps described their work for six hundred characters and never
+    named the skill carrying the method, so the agent either searched for it or
+    improvised. Named skills come from the declaration (stages.yaml, via
+    data/stage-skills.json), so this cannot drift the way a hand-written sentence
+    does.
+    """
+    if not skills:
+        return ""
+    return "\n\n## Skills this step runs\n\n" + "\n".join(f"- `{skill}`" for skill in skills)
 
 
 def menu_block(board: dict) -> str:
@@ -656,36 +675,58 @@ class IdMap(dict):
         return str(key)
 
 
-def merged_plan(host: dict, args, groups: list[dict], lock: dict) -> dict:
-    """The chain and every loose track in one workflow."""
-    install = load_install()
-    chain = build_plan(host, groups, lock["intents"], args.intent or "feature", args.gates or "human", "")
-    columns = [dict(column) for column in chain["columns"]]
-    # The chain ends at done: without this the linear default would hand the last
-    # chain column to the first loose one, which is a jump between tracks.
-    columns[-1]["next"] = "done"
-    agents = list(chain["agents"])
-    skills = list(chain["skills"])
-    for track in install["tracks"]:
-        if track["kind"] != "loose":
-            continue
-        extra, agent = loose_columns(track["board"])
-        columns.extend(extra)
-        if agent["agent"] not in [entry["agent"] for entry in agents]:
-            agents.append(agent)
-        for skill in agent["skills"]:
-            if skill not in skills:
-                skills.append(skill)
-    return {
-        "intent": "merged",
-        "gates": args.gates or "human",
-        "project": "",
-        "columns": columns,
-        "skills": skills,
-        "agents": agents,
-        "workflow": install["workflow"],
-        "_merged": True,
-    }
+def install_plans(host: dict, args, groups: list[dict], lock: dict) -> list[dict]:
+    """One plan per workflow the declaration names.
+
+    A tracker binds one workflow to a container, and a container is usually a
+    repository, so three shapes cannot be three flows inside one project. The chain
+    gets a project per repository because it is the flow that edits code; explore
+    and research are questions *about* repositories, so each owns one shared
+    project and the card names the repository it is about.
+    """
+    plans: list[dict] = []
+    for workflow in load_install()["workflows"]:
+        if workflow["kind"] == "chain":
+            plan = build_plan(
+                host, groups, lock["intents"], workflow.get("intent") or getattr(args, "intent", None) or "feature",
+                getattr(args, "gates", None) or "human", "",
+            )
+            plan["workflow"] = workflow["id"]
+            # `apply --project X` binds one repository; `install` binds them all.
+            plan["project"] = getattr(args, "project", None) or ""
+        else:
+            board = load_board(workflow["board"])
+            problems = board_problems(board)
+            if problems:
+                raise Fail(f"{workflow['board']} board would not survive a real card: " + "; ".join(problems))
+            plan = board_plan(host, board)
+            plan["workflow"] = workflow["id"]
+            plan["project"] = workflow.get("project") or board.get("project") or ""
+        plan["_workflow"] = workflow
+        plans.append(plan)
+    return plans
+
+
+def resolve_plans(host: dict, args, groups, lock) -> list[dict]:
+    """Which workflows a command line means, in declaration order.
+
+    `apply` and `verify` used to assume a single workflow, which is why the three
+    shapes had to be crammed into one graph. Naming them is the whole point, so the
+    default is the one a bare command means (the chain) and `--all-workflows`
+    (or `install`) is every one of them.
+    """
+    if getattr(args, "board", None):
+        return [resolve_plan(host, args, groups, lock)]
+    plans = install_plans(host, args, groups, lock)
+    wanted = getattr(args, "workflow_name", None) or getattr(args, "workflow", None)
+    if wanted:
+        named = [plan for plan in plans if plan["workflow"] == wanted]
+        if not named:
+            raise Fail(f"no workflow {wanted!r}; declared: " + ", ".join(plan["workflow"] for plan in plans))
+        return named
+    if getattr(args, "install", False) or getattr(args, "all_workflows", False):
+        return plans
+    return plans[:1]
 
 
 def track_entry(track_id: str) -> str:
@@ -760,7 +801,8 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
         "project": project,
         "columns": [{"id": c["id"], "label": c.get("label", c["id"]), "category": c.get("category", "started"),
                      "stages": c["stages"], "gate": bool(c.get("gate")), "agent": c.get("agent"),
-                     "back_to": c.get("back_to"), "instructions": instructions[c["id"]]} for c in columns],
+                     "back_to": c.get("back_to"), "instructions": instructions[c["id"]],
+                     "skills": column_skills(c)} for c in columns],
         "skills": skills,
         "agents": agents,
         "workflow": workflow_name(host, intent, gates),
@@ -787,7 +829,7 @@ def build_steps(plan: dict, host: dict, agent_ids: dict[str, str], create: bool)
                 step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, col["agent"])]}
         else:
             step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, col["agent"])]}
-        step["instructions"] = col["instructions"]
+        step["instructions"] = col["instructions"] + skills_block(col.get("skills") or [])
         step["next_status_key"] = nxt
         if col.get("back_to"):
             step["back_status_key"] = col["back_to"]
@@ -854,7 +896,7 @@ def resolve_plan(host: dict, args, groups, lock) -> dict:
     shape added later cannot be honoured by half the commands.
     """
     if getattr(args, "install", False):
-        return merged_plan(host, args, groups, lock)
+        return install_plans(host, args, groups, lock)[0]
     board_spec = getattr(args, "board", None)
     if not board_spec:
         return build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
@@ -877,7 +919,26 @@ def render_board_plan(plan: dict) -> str:
 
 
 def cmd_plan(host: dict, args, groups, lock) -> int:
-    plan = resolve_plan(host, args, groups, lock)
+    plans = resolve_plans(host, args, groups, lock)
+    if len(plans) > 1:
+        multica = Multica(host)
+        try:
+            live_skills = multica.skills()
+            live_agents = multica.agents()
+            live_wf = multica.workflows()
+        except Fail as exc:
+            say(f"note: live state unavailable ({exc})")
+            live_skills, live_agents, live_wf = {}, {}, {}
+        for index, entry in enumerate(plans):
+            if index:
+                say("")
+            say(f"--- {entry['workflow']}")
+            say(render_board_plan(entry) if entry.get("_board")
+                else render_plan(entry, host, lock, live_agents, live_skills, live_wf))
+        say("")
+        say("no writes performed. run `apply` to converge.")
+        return 0
+    plan = plans[0]
     if plan.get("_board"):
         say(json.dumps(plan, indent=2) if getattr(args, "json", False) else render_board_plan(plan))
         return 0
@@ -1268,7 +1329,9 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
     check("stage owners read", bool(owners), f"{len(owners)} stages")
 
     # 5. skill ownership lines up with the columns
-    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    plans = install_plans(host, args, groups, lock)
+    plan = plans[0]
+    all_skills = list(dict.fromkeys(skill for entry in plans for skill in entry["skills"]))
     gaps = owner_gaps(plan, owners)
     check("every planned stage has an owner", not gaps, "; ".join(gaps[:3]))
 
@@ -1278,11 +1341,11 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
 
     # 6. every planned skill is at the pinned upstream path
     if not offline:
-        missing = missing_upstream(host, plan["skills"])
+        missing = missing_upstream(host, all_skills)
         check(
             "every planned skill is importable",
             not missing,
-            f"{len(missing)} of {len(plan['skills'])} not found: " + ", ".join(missing[:4]),
+            f"{len(missing)} of {len(all_skills)} not found: " + ", ".join(missing[:4]),
         )
 
     # 7. the runtime the agents are bound to is actually online
@@ -1296,7 +1359,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
         try:
             live = multica.skills()
             check("CLI authorized", True, f"{len(live)} skills visible")
-            missing = [s for s in plan["skills"] if s not in live]
+            missing = [s for s in all_skills if s not in live]
             check("planned skills installed", not missing, ", ".join(missing[:4]))
         except Fail as exc:
             check("CLI authorized", False, str(exc).splitlines()[0][:120])
@@ -1586,45 +1649,50 @@ def workflow_step_keys(payload: dict) -> set[str]:
 
 
 def check_install(host: dict, args, groups, lock) -> int:
-    install = load_install()
-    plan = merged_plan(host, args, groups, lock)
+    plans = install_plans(host, args, groups, lock)
     multica = Multica(host)
     try:
         live_agents = {str(row.get("name")): str(row.get("id")) for row in rows_of(multica.json(["agent", "list"]), "agent list")}
     except Fail:
         live_agents = {}
-    want = workflow_step_keys({"steps": build_steps(plan, host, IdMap(live_agents), create=False)})
-    try:
-        live = multica.json(["workflow", "get", install["workflow"]])
-    except Fail as exc:
-        say(f"  MISSING workflow {install['workflow']}: {str(exc).splitlines()[0][:80]}")
-        return 1
-    have = workflow_step_keys(live)
-    missing = sorted(want - have)
-    say(f"  {'OK  ' if not missing else 'FAIL'} {install['workflow']:<8} {len(have)} step(s)"
-        + (f"; missing {', '.join(missing[:6])}" if missing else ""))
-    failed = 1 if missing else 0
-    for target in install_targets(host, args):
-        project_id = resolve_project(multica, target)
+    failed = 0
+    for plan in plans:
+        name = plan["workflow"]
+        want = workflow_step_keys({"steps": build_steps(plan, host, IdMap(live_agents), create=False)})
+        try:
+            live = multica.json(["workflow", "get", name])
+        except Fail as exc:
+            say(f"  MISSING workflow {name}: {str(exc).splitlines()[0][:80]}")
+            failed = 1
+            continue
+        have = workflow_step_keys(live)
+        missing = sorted(want - have)
+        say(f"  {'OK  ' if not missing else 'FAIL'} {name:<16} {len(have)} step(s)"
+            + (f"; missing {', '.join(missing[:6])}" if missing else ""))
+        failed += 1 if missing else 0
+    targets = [(plan["project"], plan["workflow"]) for plan in plans if plan.get("_board")]
+    targets += [(project, plans[0]["workflow"]) for project in install_targets(host, args)]
+    for project, workflow in targets:
+        project_id = resolve_project(multica, project)
         if not project_id:
-            say(f"  MISSING  {target:<12} project does not exist; run install")
+            say(f"  MISSING  {project:<16} project does not exist; run install")
             failed = 1
             continue
         live_name = workflow_name_of(multica.json(["project", "workflow", "get", project_id]))
-        ok = live_name == install["workflow"]
-        say(f"  {'OK  ' if ok else 'FAIL'} {target:<12} {live_name or '(none)'}"
-            + ("" if ok else f" expected {install['workflow']}"))
+        ok = live_name == workflow
+        say(f"  {'OK  ' if ok else 'FAIL'} {project:<16} {live_name or '(none)'}"
+            + ("" if ok else f" expected {workflow}"))
         failed += 0 if ok else 1
     return 1 if failed else 0
 
 
 def cmd_install(host: dict, args, groups, lock) -> int:
-    """Converge one workflow carrying the chain and every loose track.
+    """Converge the three workflows and bind each to the projects it serves.
 
-    A tracker binds one flow to a container, and a container is usually a
-    repository, so "run explore against this repo" cannot mean a second flow. It
-    means a second track inside the same flow: the track is chosen by the status
-    the card enters, and `ask` moves it there for you.
+    A tracker binds one workflow to a container, so the shapes are three workflows
+    rather than three tracks in one graph: the chain is the flow that edits code and
+    gets a project per repository, while explore and research are questions about
+    repositories and each owns one shared project.
     """
     install = load_install()
     if getattr(args, "check", False):
@@ -1635,17 +1703,18 @@ def cmd_install(host: dict, args, groups, lock) -> int:
     scoped.intent = "feature"
     if cmd_apply(host, scoped, groups, lock) != 0:
         return 1
+    chain = install["workflows"][0]["id"]
     multica = Multica(host)
     for target in install_targets(host, args):
         project_id = resolve_project(multica, target)
         if not project_id:
             multica.run(["project", "create", "--title", target,
-                         "--description", f"{install['workflow']}: chain and loose tracks"])
+                         "--description", f"{chain}: one idea carried to shipped code"])
             project_id = resolve_project(multica, target)
         if not project_id:
             raise Fail(f"project {target!r} could not be created or found")
-        multica.run(["project", "workflow", "set", project_id, install["workflow"]])
-        say(f"  = {target} -> {install['workflow']}")
+        multica.run(["project", "workflow", "set", project_id, chain])
+        say(f"  = {target} -> {chain}")
     return 0
 
 
@@ -1729,6 +1798,27 @@ STATUS_COLORS = {
 }
 
 
+def cmd_apply(host: dict, args, groups, lock) -> int:
+    failed = 0
+    for plan in resolve_plans(host, args, groups, lock):
+        failed += apply_plan(host, args, plan)
+    return 1 if failed else 0
+
+
+def cmd_verify(host: dict, args, groups, lock) -> int:
+    failed = 0
+    for plan in resolve_plans(host, args, groups, lock):
+        failed += verify_plan(host, args, plan)
+    return 1 if failed else 0
+
+
+def cmd_status(host: dict, args, groups, lock) -> int:
+    failed = 0
+    for plan in resolve_plans(host, args, groups, lock):
+        failed += status_plan(host, args, plan, lock)
+    return 1 if failed else 0
+
+
 def ensure_statuses(multica: Multica, plan: dict) -> int:
     """Workspace statuses first, then the workflow that wires them.
 
@@ -1751,8 +1841,7 @@ def ensure_statuses(multica: Multica, plan: dict) -> int:
     return added
 
 
-def cmd_apply(host: dict, args, groups, lock) -> int:
-    plan = resolve_plan(host, args, groups, lock)
+def apply_plan(host: dict, args, plan: dict) -> int:
     preflight(host)
     if not getattr(args, "offline", False):
         # Before the first write: a bad skill name would otherwise fail the run
@@ -1816,8 +1905,7 @@ def cmd_apply(host: dict, args, groups, lock) -> int:
     return 0
 
 
-def cmd_verify(host: dict, args, groups, lock) -> int:
-    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+def verify_plan(host: dict, args, plan: dict) -> int:
     multica = Multica(host)
     problems: list[str] = []
     live_skills = multica.skills()
@@ -1898,9 +1986,8 @@ def cmd_verify(host: dict, args, groups, lock) -> int:
     return 0
 
 
-def cmd_status(host: dict, args, groups, lock) -> int:
+def status_plan(host: dict, args, plan: dict, lock: dict) -> int:
     multica = Multica(host)
-    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
     live_skills = multica.skills()
     live_agents = multica.agents()
     live_wf = multica.workflows()
@@ -1925,6 +2012,10 @@ def main(argv: list[str]) -> int:
                         help="gate handler: the project lead (human) or the review agent")
     common.add_argument("--project", default=None, help="Multica project id")
     common.add_argument("--json", action="store_true")
+    common.add_argument("--workflow", dest="workflow_name", default=None,
+                        help="only this workflow (default: the chain)")
+    common.add_argument("--all-workflows", dest="all_workflows", action="store_true",
+                        help="every declared workflow: chain, explore, research")
     common.add_argument("--refresh-skills", action="store_true", help="re-pull imported skills from their source")
     common.add_argument("--migrate", action="store_true", help="pass --map for built-in statuses when switching the project")
     common.add_argument("--offline", action="store_true", help="skip checks that need the network or the live workspace")

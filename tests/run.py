@@ -407,7 +407,7 @@ class TestApply(HostCase):
     def test_human_gates_hand_the_step_to_the_project_lead(self):
         """A human gate that silently runs an agent is the worst possible failure."""
         self.apply(gates="human")
-        steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow-feature-human"]}
+        steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow"]}
         for gate in ("product_gate", "interface_gate", "tech_gate", "diff_gate"):
             self.assertEqual(steps[gate]["handler"]["type"], "project_lead", gate)
 
@@ -415,14 +415,14 @@ class TestApply(HostCase):
         """Without this the --gates agent mode would leave gates to a stage agent."""
         self.apply(gates="agent")
         reviewer = self.fp().state["agents"]["stelow-review"]
-        steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow-feature"]}
+        steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow"]}
         for gate in ("product_gate", "interface_gate", "tech_gate", "diff_gate"):
             self.assertEqual(steps[gate]["handler"], {"type": "agent", "id": reviewer}, gate)
 
     def test_steps_chain_forward_and_back(self):
         """A broken forward chain strands the issue; a broken back edge loses rework."""
         self.apply()
-        steps = self.fp().state["workflows"]["stelow-feature-human"]
+        steps = self.fp().state["workflows"]["stelow"]
         keys = [s["status_key"] for s in steps]
         self.assertEqual(keys[0], "todo")
         self.assertEqual(keys[-1], "done")
@@ -448,13 +448,13 @@ class TestApply(HostCase):
     def test_project_is_pointed_at_the_workflow(self):
         """Provisioning without the project binding leaves the board unchanged."""
         self.apply(project="proj-1")
-        self.assertEqual(self.fp().state["projects"]["proj-1"], "stelow-feature-human")
+        self.assertEqual(self.fp().state["projects"]["proj-1"], "stelow")
 
     def test_back_target_always_exists_in_the_chain(self):
         """A short intent chain can omit the column stelow reworks to; a dangling
         back_status_key either fails at the server or strands the issue."""
         self.apply(intent="refactor")
-        steps = self.fp().state["workflows"]["stelow-refactor-human"]
+        steps = self.fp().state["workflows"]["stelow"]
         keys = {step["status_key"] for step in steps}
         for step in steps:
             for field in ("next_status_key", "back_status_key"):
@@ -607,7 +607,7 @@ class TestVerify(HostCase):
         """The API spells "nothing happens" as {"type":"none"} and our bookends
         omit the field; comparing raw values reported drift on todo and done."""
         self.apply()
-        wf = self.fake.state["workflows"]["stelow-feature-human"]
+        wf = self.fake.state["workflows"]["stelow"]
         for step in wf:
             step.setdefault("handler", {"type": "none"})
         self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 0)
@@ -622,14 +622,14 @@ class TestVerify(HostCase):
         list compare made verify fail forever on a converged workspace — the
         check that is supposed to be runnable stopped being runnable."""
         self.apply()
-        self.fake.state["workflows"]["stelow-feature-human"].append({"status_key": "cancelled"})
+        self.fake.state["workflows"]["stelow"].append({"status_key": "cancelled"})
         self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 0)
 
     def test_an_unexpected_custom_column_is_drift(self):
         """The other half: a column we never asked for means someone edited the
         board by hand, and verify must say so."""
         self.apply()
-        self.fake.state["workflows"]["stelow-feature-human"].append({"status_key": "staging"})
+        self.fake.state["workflows"]["stelow"].append({"status_key": "staging"})
         self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 1)
 
     def test_verify_passes_right_after_apply(self):
@@ -651,7 +651,7 @@ class TestVerify(HostCase):
         """A gate quietly reassigned to an agent must be reported, not tolerated."""
         self.apply()
         state = json.loads(json.dumps(self.fp().state))
-        for step in state["workflows"]["stelow-feature-human"]:
+        for step in state["workflows"]["stelow"]:
             if step["status_key"] == "product_gate":
                 step["handler"] = {"type": "project_lead"}
                 step["next_status_key"] = "design"
@@ -947,12 +947,12 @@ class TestBoards(unittest.TestCase):
         # something the workflow endpoint rejects.
         plan = HOST.board_plan({"agents": {}}, HOST.load_board("research"))
         self.assertEqual(plan["gates"], "human")
-        self.assertEqual([c["id"] for c in plan["columns"]], ["open", "run", "review"])
+        self.assertEqual([c["id"] for c in plan["columns"]], ["bucket", "doing", "review"])
         self.assertEqual(len(plan["skills"]), len(HOST.load_board("research")["menu"]))
 
 
 class TestStalledCards(unittest.TestCase):
-    KNOWN = {"run", "review"}
+    KNOWN = {"doing", "review"}
 
     def issue(self, key, status, stamp):
         return {"key": key, "id": key, "status": status, "updated_at": stamp}
@@ -962,10 +962,10 @@ class TestStalledCards(unittest.TestCase):
         # because "nothing is broken" and "nothing is moving" are different.
         from datetime import datetime, timezone
         now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
-        issues = [self.issue("CAL-1", "run", "2026-11-13T11:00:00Z"),
-                  self.issue("CAL-2", "run", "2026-11-15T10:00:00Z")]
+        issues = [self.issue("CAL-1", "doing", "2026-11-13T11:00:00Z"),
+                  self.issue("CAL-2", "doing", "2026-11-15T10:00:00Z")]
         self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now),
-                         [("CAL-1", "run", 49.0)])
+                         [("CAL-1", "doing", 49.0)])
 
     def test_a_closed_card_is_never_stalled(self):
         from datetime import datetime, timezone
@@ -988,7 +988,7 @@ class TestWorkflowName(unittest.TestCase):
 
     def test_the_set_shape_reads_as_a_name(self):
         # Catches: the other shape, from `project workflow set`.
-        self.assertEqual(HOST.workflow_name_of({"workflow": "stelow-feature-human"}), "stelow-feature-human")
+        self.assertEqual(HOST.workflow_name_of({"workflow": "stelow"}), "stelow")
 
     def test_an_unknown_shape_is_empty_not_a_crash(self):
         self.assertEqual(HOST.workflow_name_of(None), "")
@@ -1011,8 +1011,8 @@ class TestInstall(HostCase):
         # Catches: a hyphen in a track entry, which a tracker rejects with a
         # message about the key shape rather than about the track.
         self.assertEqual(HOST.track_entry("build"), "intake")
-        self.assertEqual(HOST.track_entry("explore"), "explore_run")
-        self.assertEqual(HOST.track_entry("research"), "research_run")
+        self.assertEqual(HOST.track_entry("explore"), "bucket")
+        self.assertEqual(HOST.track_entry("research"), "bucket")
 
     def test_install_check_fails_when_a_project_runs_another_workflow(self):
         # Catches: a repository project left on another flow, which reports green
@@ -1023,22 +1023,55 @@ class TestInstall(HostCase):
         code = HOST.cmd_install(self.host, self.args(check=True), self.groups, self.lock)
         self.assertEqual(code, 1)
 
-    def test_install_check_passes_when_every_project_runs_the_workflow(self):
+    def seed_three_workflows(self):
+        """The workspace an install is supposed to produce, written by hand."""
+        plans = HOST.install_plans(self.host, self.args(), self.groups, self.lock)
+        self.fake.state["workflows"] = {}
+        for plan in plans:
+            steps = HOST.build_steps(plan, self.host, HOST.IdMap({}), create=False)
+            self.fake.state["workflows"][plan["workflow"]] = [{"status_key": s["status_key"]} for s in steps]
+        self.fake.state["project_titles"]["proj-1"] = "stelow"
+        self.fake.state["projects"] = {
+            "proj-1": "stelow", "probe-explore": "stelow-explore", "probe-research": "stelow-research",
+        }
+        self.fake.state["project_titles"]["probe-explore"] = "Explore"
+        self.fake.state["project_titles"]["probe-research"] = "Research"
+        return plans
+
+    def test_install_declares_three_workflows(self):
+        # Catches: the twenty-column board coming back, or a lane silently becoming
+        # a status inside the chain again.
+        plans = HOST.install_plans(self.host, self.args(), self.groups, self.lock)
+        self.assertEqual([plan["workflow"] for plan in plans],
+                         ["stelow", "stelow-explore", "stelow-research"])
+        self.assertEqual([plan["project"] for plan in plans], ["", "Explore", "Research"])
+        chain = {column["id"] for column in plans[0]["columns"]}
+        self.assertNotIn("explore_run", chain)
+        self.assertNotIn("research_run", chain)
+
+    def test_install_check_passes_when_every_project_runs_its_workflow(self):
         # Catches: a check that fails on a correct workspace, which teaches people
         # to ignore it.
-        name = HOST.load_install()["workflow"]
         self.host["multica"]["project_id"] = "proj-1"
-        plan = HOST.merged_plan(self.host, self.args(), self.groups, self.lock)
-        steps = HOST.build_steps(plan, self.host, HOST.IdMap({}), create=False)
-        self.fake.state["projects"] = {"proj-1": name}
-        self.fake.state["workflows"] = {name: [{"status_key": s["status_key"]} for s in steps]}
+        self.seed_three_workflows()
         code = HOST.cmd_install(self.host, self.args(check=True), self.groups, self.lock)
         self.assertEqual(code, 0)
+
+    def test_install_check_fails_when_a_lane_runs_the_build_flow(self):
+        # Catches: an Explore project pointed at the chain, so an explore card lands
+        # in `intake` and gets walked through eighteen stages.
+        self.host["multica"]["project_id"] = "proj-1"
+        self.seed_three_workflows()
+        self.fake.state["projects"]["probe-explore"] = "stelow"
+        code = HOST.cmd_install(self.host, self.args(check=True), self.groups, self.lock)
+        self.assertEqual(code, 1)
 
     def args(self, **kwargs):
         scope = types.SimpleNamespace(intent="feature", gates="human", project=None,
                                       migrate=False, refresh_skills=False, json=False,
-                                      offline=True, board=None, all=False, check=False)
+                                      offline=True, board=None, all=False, check=False,
+                                      install=False, all_workflows=False, workflow_name=None,
+                                      all_projects=False)
         for key, value in kwargs.items():
             setattr(scope, key, value)
         return scope
@@ -1090,7 +1123,7 @@ class TestAsk(HostCase):
         issue = list(self.fake.state["issues"].values())[0]
         body = (self.tmp / ".stelow-cache" / "ask.md").read_text()
         self.assertIn("stelow-product-pricing", body)
-        self.assertEqual(issue["status"], "research_run")
+        self.assertEqual(issue["status"], "bucket")
 
     def test_an_unknown_strategy_is_refused_listing_the_menu(self):
         # Catches: a typo silently becoming the runner's own choice.

@@ -1,10 +1,35 @@
 {
-  "_comment": "One workflow, several tracks. A tracker binds exactly one flow to a container, and a container is usually a repository, so three shapes cannot be three flows inside one project. They are one flow with three tracks; a card picks its track by the status it first enters.",
+  "_comment": "Three workflows, because a tracker binds one workflow to a container and a container is usually a repository. The chain (build) is the flow that edits code, so it gets a project per repository. Explore and research are questions ABOUT repositories, so each owns one shared project and the card names the repository it is about. Mixing them into one graph produced a twenty-column board carrying three unrelated subjects.",
   "workflow": "stelow",
+  "workflows": [
+    {
+      "id": "stelow",
+      "kind": "chain",
+      "board": "build",
+      "intent": "feature",
+      "projects": "repo",
+      "why": "one idea carried to shipped code; per repository because it edits code"
+    },
+    {
+      "id": "stelow-explore",
+      "kind": "loose",
+      "board": "explore",
+      "project": "Explore",
+      "why": "one stage skill applied to something that already exists; shared across repositories"
+    },
+    {
+      "id": "stelow-research",
+      "kind": "loose",
+      "board": "research",
+      "project": "Research",
+      "why": "one product skill on one decision; shared across repositories"
+    }
+  ],
   "tracks": [
     {
       "id": "build",
       "kind": "chain",
+      "workflow": "stelow",
       "entry": "intake",
       "why": "one idea carried to shipped code"
     },
@@ -12,14 +37,16 @@
       "id": "explore",
       "kind": "loose",
       "board": "explore",
-      "entry": "explore_run",
+      "workflow": "stelow-explore",
+      "entry": "bucket",
       "why": "one stage skill applied to something that already exists"
     },
     {
       "id": "research",
       "kind": "loose",
       "board": "research",
-      "entry": "research_run",
+      "workflow": "stelow-research",
+      "entry": "bucket",
       "why": "one product skill on one decision"
     }
   ]

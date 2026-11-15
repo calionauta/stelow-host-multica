@@ -1,15 +1,17 @@
 # stelow-host-multica
 
-Provision **stelow** onto [Multica](https://multica.ai): one workflow, the stage
-agents that run it, and exactly the stelow skills each agent needs — from the
-CLI, idempotently, with no clicks in the UI.
+Provision **stelow** onto [Multica](https://multica.ai): the three workflows the
+method needs, the agents that run them, and exactly the stelow skills each agent
+gets — from the CLI, idempotently, with no clicks in the UI.
 
 This is a **provisioner**, not a plugin. It ships no runtime, no UI, and no
 daemon. Everything it does is `multica` CLI calls you could type yourself; it
 exists so you do not have to, and so the mapping stays reviewable.
 
 ```
-config/columns.json     the host's opinion: 18 stelow stages → board columns → 3 agents
+config/columns.json     the host's opinion: 18 stelow stages → build columns → 3 agents
+config/install.json     the three workflows, and the project each one attaches to
+boards/*.json           the two loose lanes: explore (one stage skill), research (one product skill)
 config/host.json        workspace knobs: repo, ref, runtime, model, defaults
 agents/*.md             agent identity (plan, build, review) + the Multica/state adapter
 stages/columns.md       what each column asks of its handler
@@ -27,33 +29,47 @@ workspace by hand is up to 19 skill imports, 3 agents, 6–11 status columns, an
 a handful of handoffs, most of it easy to get subtly wrong (status keys must
 slugify from the column label, or updates diverge from creation forever).
 
-## One workflow, three tracks
+## Three workflows
 
-A tracker binds exactly one flow to a container, and a container is usually a
-repository. So "run explore against this repo" cannot mean a second flow: it
-means a second **track** inside the same flow. `install` converges one workflow
-with every track, and attaches it to the projects you name — one project per
-repository, which is how people already use them.
+A tracker binds **one workflow to one container**, and a container is usually a
+repository. There is no workflow per card and no track per card, so the question
+"build, explore or research?" is answered by *where the card lives*, not by a
+column it walks into:
 
-| track | first status | what it carries |
-|---|---|---|
-| build | `intake` | one idea carried to shipped code, eighteen statuses |
-| explore | `explore_run` | one `stelow-workflow-*` skill applied to something that exists |
-| research | `research_run` | one `stelow-product-*` skill on one decision |
+| workflow | projects | columns | what it carries |
+|---|---|---|---|
+| `stelow` | one per repository | 12 (`intake` ... `audit` to `done`) | one idea carried to shipped code |
+| `stelow-explore` | one shared `Explore` | Bucket, Doing, Review, Done | one `stelow-workflow-*` skill on something that already exists |
+| `stelow-research` | one shared `Research` | Bucket, Doing, Review, Done | one `stelow-product-*` skill on one decision |
 
-A card picks its track by the status it enters, and `ask` moves it there:
+The chain gets a project per repository because it is the flow that **edits
+code**. Explore and research are questions *about* repositories, so they each own
+one shared project and the card names the repository it is about: the same
+answer, without asking people to create three boards for every repository they
+own.
+
+Everything before this was one graph with three tracks inside it: twenty columns,
+an explore card sitting beside a build card on the same board, which is neither
+what the tracker means by a project nor what the method means by a stage.
 
 ```bash
 ./bin/stelow-host board                            # validate declarations, no network
+./bin/stelow-host plan --all-workflows             # all three, no writes
 ./bin/stelow-host install --check                  # does the live workspace match?
-./bin/stelow-host install --all-projects           # converge the workflow, attach to every project
-./bin/stelow-host ask research "is R$97/mo defensible?" --skill pricing
+./bin/stelow-host install --all-projects           # converge all three, attach to every project
+./bin/stelow-host ask research "what would settle the price?" --skill pricing
+./bin/stelow-host ask explore "does advance refuse an undeclared recipe?" --skill codebase-critique
 ./bin/stelow-host ask build "cards must not stall"
 ```
 
+Each step names the skills it runs. A column's skills are the ones its stage
+declares (`stages.yaml` into `data/stage-skills.json`) plus the support skills
+the host adds for it, and they are written into that step's own instructions, so
+an agent neither has to search for the method nor improvise one.
+
 Nothing about a card lives in this repository: the declarations say what the
-tracks are, the tracker holds the cards, and `install --check` compares the two.
-[`docs/boards.md`](docs/boards.md) explains the reasoning and how to add a track.
+workflows are, the tracker holds the cards, and `install --check` compares the
+two. [`docs/boards.md`](docs/boards.md) explains the lanes and how to add one.
 
 ## Watching a board that is not moving
 

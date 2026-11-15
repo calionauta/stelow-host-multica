@@ -4,6 +4,48 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.0] - 2026-11-15
+
+The board had three subjects and twenty columns. Now it is three workflows, and
+every step names the skills it runs.
+
+### Changed
+
+- **One workflow became three: `stelow`, `stelow-explore`, `stelow-research`.**
+  A tracker binds one workflow to a container, and the previous version read that
+  as "one flow, three tracks inside it", with the track encoded in the status key
+  (`explore_run`) and the card picking its shape by where it entered. It worked
+  and it was wrong in the way that only shows on a real board: an explore card sat
+  beside a build card, a column could not say which of three subjects it belonged
+  to, and a status key cannot carry a menu, a runner or a default. Build edits
+  code, so it keeps a project per repository; explore and research are questions
+  about repositories, so each owns one shared project (`Explore`, `Research`) and
+  the card names the repository it is about — N + 2 projects instead of 3N.
+- **The lanes use the tracker's own vocabulary**: `Bucket` (a person makes the
+  card answerable), `Doing` (one agent, one skill), `Review` (a person, can send
+  back), then `Done`. `Review` stays a column of its own instead of hiding inside
+  `Doing`, because that gate is the only thing standing between an artifact and
+  someone acting on it.
+- **The chain's workflow name is declared, not derived.** `stelow-feature-human`
+  and friends are gone: what varies with the intent is the columns, not the name.
+  `--intent bugfix` converges the same `stelow` workflow with the bugfix columns.
+
+### Added
+
+- **Every step names the skills it runs.** A column's skills are the ones its
+  stages declare (`stages.yaml` into `data/stage-skills.json`) plus the support
+  skills the host adds for it, rendered into the step's own instructions. Before
+  this, a column described its work for six hundred characters and never named the
+  skill carrying the method, so the agent searched for it or improvised one.
+- **`--all-workflows`** on `plan`, `apply`, `verify` and `status`, and
+  `--workflow <id>` to address one. `install` always means all three.
+
+### Fixed
+
+- **`install --check` looks at every workflow and every project.** It reported
+  green for a workspace where the `Explore` project ran the build chain, which is
+  the one mistake that puts an explore card through eighteen stages.
+
 ## [0.2.1] - 2026-11-15
 
 Three findings from the canary card that proved the tracks (CAL-54), none of which

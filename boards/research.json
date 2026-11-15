@@ -95,16 +95,16 @@
   ],
   "columns": [
     {
-      "id": "open",
-      "label": "Open",
+      "id": "bucket",
+      "label": "Bucket",
       "category": "unstarted",
       "gate": true,
       "agent": null,
       "instructions": "A card arrives here and nothing runs. Make it answerable before it moves: the decision that has to be made, what is already known (numbers, interviews, past attempts), and by when it matters. If the request names a skill, keep the name. If it names more than one decision, split it: one card carries one decision, because a research artifact that settles three things settles none."
     },
     {
-      "id": "run",
-      "label": "Run",
+      "id": "doing",
+      "label": "Doing",
       "category": "started",
       "gate": false,
       "agent": "research-runner",
@@ -115,9 +115,10 @@
       "label": "Review",
       "category": "started",
       "gate": true,
-      "back_to": "run",
+      "back_to": "doing",
       "agent": null,
-      "instructions": "Read the artifact and answer one question: could someone act on this, and would they be right to? Send it back if a recommendation rests on a claim with no source, if the criteria the skill declares are not met, or if it recommends without naming what would prove it wrong; say which of those three in one line.\n\nThis column is a person's. While the card waits here it carries `needs-human` and one nudge, so a waiting card cannot be mistaken for a dead run."
+      "instructions": "Read the artifact and answer one question: could someone act on this, and would they be right to? Send it back if a recommendation rests on a claim with no source, if the criteria the skill declares are not met, or if it recommends without naming what would prove it wrong; say which of those three in one line.\n\nThis column is a person's. While the card waits here it carries `needs-human` and one nudge, so a waiting card cannot be mistaken for a dead run.",
+      "next": "done"
     }
   ],
   "policy": {

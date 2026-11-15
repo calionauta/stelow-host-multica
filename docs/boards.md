@@ -4,42 +4,53 @@ The stage chain in `config/columns.json` carries one idea all the way to shipped
 code. That is the wrong shape for most questions: "critique this diff" does not
 need eighteen statuses, and "should we charge per seat" does not need a build.
 
-So the same workflow carries three **tracks**, and a card picks one by the status
-it enters.
+So there are three workflows, not one:
 
-| track | first status | statuses | who answers |
+| workflow | projects | statuses | who answers |
 |---|---|---|---|
-| build | `intake` | eighteen | the chain, with three human gates |
-| explore | `explore_run` | `explore_open`, `explore_run`, `explore_review` | one `stelow-workflow-*` skill, then a person |
-| research | `research_run` | `research_open`, `research_run`, `research_review` | one `stelow-product-*` skill, then a person |
+| `stelow` | one per repository | the eighteen stages, with three human gates | the chain |
+| `stelow-explore` | one shared `Explore` | Bucket, Doing, Review, Done | one `stelow-workflow-*` skill, then a person |
+| `stelow-research` | one shared `Research` | Bucket, Doing, Review, Done | one `stelow-product-*` skill, then a person |
 
-## Why one workflow and not three boards
+## Why three workflows and not three tracks
 
-A tracker binds **one flow to a container**, and a container is usually a
-repository. That rules out the obvious design: three boards would mean three
-containers per repository — the repository itself, plus two that are not
-repositories at all. Every question would need a person to decide which container
-it belongs in before anything ran, which is the triage the boards exist to remove.
+A tracker binds **one workflow to a container**, and a container is usually a
+repository. The first version of this repository read that as "one flow, three
+tracks inside it", with the track encoded in the status key
+(`explore_run`): a card picked its shape by where it entered.
 
-With one flow and three tracks, the repository stays the container and the
-question stays where the work is. The status key carries the track name
-(`explore_run`), with an underscore because tracker status keys only admit
-lowercase letters, digits and underscores. A card's status therefore says which
-shape it is walking, and no two tracks can collide on `review`.
+It worked, and it was wrong in the way that only shows up on a real board. One
+workflow meant twenty columns, an explore card sitting beside a build card on the
+same board, and a person unable to see at a glance which of three subjects a
+column belonged to. A status key is not a container: it can carry a name, but it
+cannot carry a project, a menu, a runner or a default.
 
-State lives in the tracker: cards, statuses, comments, attachments. This
+Multica gives exactly one lever here. `project workflow set` binds a workflow; no
+card-level workflow exists. So the split has to be a split of containers, and the
+honest question becomes which containers deserve their own flow:
+
+- **build** edits code, so it belongs to the repository and gets a project per
+  repository;
+- **explore** and **research** are questions *about* repositories, so each gets one
+  shared project and the card names the repository it is about.
+
+That is N + 2 projects instead of 3N, and the triage a person does is "which lane
+does this question belong to", which they can answer, instead of "which of these
+twenty columns", which they could not.
+
+State still lives in the tracker: cards, statuses, comments, attachments. This
 repository holds only the declarations, and `install --check` compares the two, so
 the repository cannot drift from the live board by holding a stale copy of it.
 
 ## Asking for a specific strategy
 
 A research card is a question plus the skill that answers it. `ask` writes both
-and moves the card straight to `run`, so nothing waits for a triage step nobody
-asked for:
+and moves the card straight to `doing`, so nothing waits for a triage step nobody
+asked for (the card was already answerable: you asked it):
 
 ```bash
-./bin/stelow-host ask research "is R$97/mo defensible for a solo consultant?" --skill pricing
-./bin/stelow-host ask explore "critique the review-queue diff in PR 516" --skill diff-review
+./bin/stelow-host ask research "what would settle the price?" --skill pricing
+./bin/stelow-host ask explore "critique the review-queue diff in PR 516" --skill codebase-critique
 ./bin/stelow-host ask build "cards must not stall"
 ```
 
@@ -57,18 +68,18 @@ By hand, the same thing is one line in the description:
 That line wins over the runner's own choice; it is the first rule the `run`
 column gives the agent.
 
-The card lands in the project you name, else the configured one, else the track's
-own — because the container is the repository you are working in, not the track.
+The card lands in the lane's project (`Explore` or `Research`), and the body names
+the repository it is about, because the lane is the container that runs it.
 
-## What a loose track is
+## What a lane is
 
 Three columns:
 
 ```
-open (a person)  →  run (one agent)  →  review (a person, can send back)
+bucket (a person)  →  doing (one agent)  →  review (a person, can send back)
 ```
 
-`open` is where a card becomes answerable. `run` is the only column that works,
+`bucket` is where a card becomes answerable. `doing` is the only column that works,
 and it loads **exactly one** skill from the menu. `review` is the only gate, and
 it answers one question: does the artifact settle what the card asked?
 
@@ -112,8 +123,9 @@ that runs and says nothing).
 ```
 
 That imports every menu's skills at the pinned stelow ref, creates the runner
-agents, creates the workspace statuses, converges the one workflow, and attaches
-it to the projects you name.
+agents, creates the workspace statuses for all three workflows, and attaches
+each to its projects: the chain to every repository you name, each lane to its
+own shared project (`Explore`, `Research`), created if it does not exist.
 
 ## Adding a skill to a menu
 
@@ -126,9 +138,10 @@ Add one line to `boards/<name>.json`:
 Skill names are the stelow repo's directory names, and `stelow-host board` refuses
 one that does not match the board's `skill_prefix`. Re-run `install` to push it.
 
-## Adding a fourth track
+## Adding a fourth lane
 
 Copy a file in `boards/`, change `board`, `workflow`, `project`, `runner`,
 `skill_prefix` and the menu, add `agents/<runner>.md`, and add one entry to
-`config/install.json`. The three columns and their instructions are the template;
-nothing else in the repo needs to know the track exists.
+`config/install.json` (a `workflows` entry with `kind: loose` plus its `tracks`
+entry). The three columns and their instructions are the template; nothing else
+in the repo needs to know the lane exists.

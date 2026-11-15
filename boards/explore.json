@@ -67,16 +67,16 @@
   ],
   "columns": [
     {
-      "id": "open",
-      "label": "Open",
+      "id": "bucket",
+      "label": "Bucket",
       "category": "unstarted",
       "gate": true,
       "agent": null,
       "instructions": "A card arrives here and nothing runs. Make it answerable before it moves: what is being judged, where it lives (repo, branch, diff, document), and what artifact the requester wants back. If the request names a skill, keep the name. If it names more than one, split it into more cards now: this board runs one skill per card, and a card carrying three questions has no artifact anyone can review."
     },
     {
-      "id": "run",
-      "label": "Run",
+      "id": "doing",
+      "label": "Doing",
       "category": "started",
       "gate": false,
       "agent": "explore-runner",
@@ -87,9 +87,10 @@
       "label": "Review",
       "category": "started",
       "gate": true,
-      "back_to": "run",
+      "back_to": "doing",
       "agent": null,
-      "instructions": "Read the artifact and answer one question: does it settle what the card asked? Approve it and the card closes. Send it back if the artifact answers a different question, cites nothing, or leaves the judgement to the reader; say which of those three in one line, because a send-back with no reason is a second round nobody learns from.\n\nThis column is a person's. While the card waits here it carries `needs-human` and one nudge, so a waiting card cannot be mistaken for a dead run."
+      "instructions": "Read the artifact and answer one question: does it settle what the card asked? Approve it and the card closes. Send it back if the artifact answers a different question, cites nothing, or leaves the judgement to the reader; say which of those three in one line, because a send-back with no reason is a second round nobody learns from.\n\nThis column is a person's. While the card waits here it carries `needs-human` and one nudge, so a waiting card cannot be mistaken for a dead run.",
+      "next": "done"
     }
   ],
   "policy": {
