@@ -4,6 +4,19 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.1] - 2026-11-15
+
+### Fixed
+
+- **`card` read a lane card against the build chain.** An Explore card was told it
+  owed `01-spec-product.md` through `18-audit-table.md`, which is true of no card
+  on that board. A lane card now owes one artifact and `card` says which lane and
+  which strategy it judged it against.
+- **A research card was reported as `lane: explore`.** Both lanes use `bucket`,
+  `doing` and `review`, and the first board alphabetically answered. The strategy
+  the card names decides, then its project, and a card that neither places is
+  refused as ambiguous instead of guessed.
+
 ## [0.3.0] - 2026-11-15
 
 The board had three subjects and twenty columns. Now it is three workflows, and

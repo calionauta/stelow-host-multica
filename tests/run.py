@@ -181,6 +181,11 @@ class FakeMultica:
                 normalized.append(entry)
             self.state["workflows"][name] = normalized
             return 0, json.dumps({"name": name, "steps": normalized}), ""
+        if args[:2] == ["issue", "get"]:
+            issue = self.state.setdefault("issues", {}).get(args[2])
+            return (0, json.dumps(issue), "") if issue else (1, "", "issue not found")
+        if args[:3] == ["issue", "comment", "list"]:
+            return 0, json.dumps(self.state.setdefault("comments", {}).get(args[3], [])), ""
         if args[:3] == ["issue", "label", "add"]:
             self.state.setdefault("labels", {}).setdefault(args[3], set()).add(args[4])
             return 0, json.dumps({"ok": True}), ""
@@ -269,7 +274,22 @@ class HostCase(unittest.TestCase):
         HOST.set_root(self.tmp)
         self.original = HOST.Multica
         self.fake = FakeMultica(None)
-        HOST.Multica = lambda host: self.fake
+
+        class FakeFactory:
+            """A factory that also answers the class-level helpers the host calls.
+
+            `cmd_card` uses `Multica._one` on the class, so a bare lambda was enough
+            for everything except reading a card.
+            """
+
+            _one = staticmethod(HOST.Multica._one)
+
+            def __call__(self, host):
+                return self.fake
+
+        factory = FakeFactory()
+        factory.fake = self.fake
+        HOST.Multica = factory
         self.host = HOST.load_host(self.tmp / "config" / "host.json")
         self.host["multica"]["runtime_id"] = "rt-test"
         self.host["multica"]["workspace_id"] = "ws-test"
@@ -1075,6 +1095,93 @@ class TestInstall(HostCase):
         for key, value in kwargs.items():
             setattr(scope, key, value)
         return scope
+
+
+class TestWhatACardKept(HostCase):
+    def seed(self, status, description, attachments):
+        self.fake.state.setdefault("issues", {})["i1"] = {
+            "id": "i1", "key": "CAL-9", "title": "a card", "status": status, "description": description,
+        }
+        self.fake.state.setdefault("comments", {})["i1"] = [
+            {"attachments": [{"filename": name} for name in attachments]},
+        ]
+
+    def card_output(self):
+        import contextlib
+        import io
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = HOST.cmd_card(self.host, types.SimpleNamespace(issue="i1"), self.groups)
+        return code, buffer.getvalue()
+
+    def test_a_lane_card_owes_one_artifact_not_eighteen(self):
+        # Catches: `card` telling an Explore card it owed 01-spec-product.md through
+        # 18-audit-table.md, which is true of no card on that board.
+        self.seed("review", "**Strategy:** stelow-workflow-codebase-critique", ["critique.md"])
+        code, out = self.card_output()
+        self.assertEqual(code, 0)
+        self.assertIn("lane: explore", out)
+        self.assertIn("stelow-workflow-codebase-critique", out)
+        self.assertNotIn("01-spec-product.md", out)
+
+    def test_a_lane_card_that_reached_review_with_nothing_is_a_failure(self):
+        # Catches: a lane run that advanced the card without producing the artifact,
+        # which every check reported as healthy because there was nothing to compare.
+        self.seed("review", "**Strategy:** stelow-product-pricing", [])
+        code, _ = self.card_output()
+        self.assertEqual(code, 1)
+
+    def test_a_research_card_is_not_reported_as_explore(self):
+        # Catches the live bug: both lanes use `review`, and the first board
+        # alphabetically answered, so a research card reported `lane: explore`.
+        self.seed("review", "**Strategy:** stelow-product-pricing", ["01-pricing.md"])
+        code, out = self.card_output()
+        self.assertEqual(code, 0)
+        self.assertIn("lane: research", out)
+
+    def test_a_card_with_no_strategy_is_placed_by_its_project(self):
+        # Catches: a card typed by hand (no Strategy line) landing in whichever lane
+        # sorts first, so its artifact is judged against the wrong menu.
+        self.seed("doing", "", [])
+        self.fake.state["project_titles"]["proj-r"] = "Research"
+        self.fake.state["issues"]["i1"]["project_id"] = "proj-r"
+        code, out = self.card_output()
+        self.assertEqual(code, 0)
+        self.assertIn("lane: research", out)
+
+    def test_a_card_no_lane_can_place_is_refused(self):
+        # Catches: a hand-typed card in a shared status silently judged against
+        # whichever lane sorts first.
+        self.seed("doing", "", [])
+        code, out = self.card_output()
+        self.assertEqual(code, 1)
+        self.assertIn("ambiguous", out)
+
+    def test_a_status_only_one_lane_uses_still_places_the_card(self):
+        self.assertEqual((HOST.lane_for_card({"description": ""}, "intake", {}) or {}).get("board"), None)
+        self.assertEqual((HOST.lane_for_card({"description": ""}, "review", {}) or {}).get("board"), None)
+
+    def test_a_lane_card_in_doing_may_still_owe_its_artifact(self):
+        # Catches: reporting a run in progress as a failure, which teaches people to
+        # ignore the check.
+        self.seed("doing", "**Strategy:** stelow-workflow-codebase-critique", [])
+        code, out = self.card_output()
+        self.assertEqual(code, 0)
+        self.assertIn("lane: explore", out)
+        self.assertIn("kept 0", out)
+
+    def test_a_chain_card_still_owes_the_chain(self):
+        # Catches: the lane branch swallowing every card, so a finished build card
+        # with no artifacts read as fine.
+        self.seed("done", "", [])
+        code, out = self.card_output()
+        self.assertEqual(code, 1)
+        self.assertIn("18-audit-table.md", out)
+
+    def test_the_named_strategy_is_read_back_from_the_body(self):
+        self.assertEqual(HOST.declared_strategy({"description": "x\n**Strategy:** stelow-product-pricing\n"}),
+                         "stelow-product-pricing")
+        self.assertEqual(HOST.declared_strategy({"description": "no line here"}), "")
 
 
 class TestTheEntryColumn(HostCase):

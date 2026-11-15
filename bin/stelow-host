@@ -1278,6 +1278,42 @@ def board_findings(issues, gates, known, running, labels):
     return unmarked, orphans, stale
 
 
+def lane_for_card(issue: dict, status: str, project_titles: dict[str, str]) -> dict | None:
+    """Which lane this card belongs to, if any.
+
+    Both lanes use the same status keys (`bucket`, `doing`, `review`), so the status
+    alone cannot say which one a card is on: asked live, a research card answered
+    "lane: explore" because explore sorts first. The strategy the card names decides,
+    then its project, then a status that only one lane uses.
+
+    A card in a lane owes one artifact, not the chain's eighteen. Without this,
+    `card` told an Explore card it owed 01-spec-product.md through
+    18-audit-table.md, which is true of no card on that board.
+    """
+    boards = [load_board(path.stem) for path in sorted((ROOT / "boards").glob("*.json"))]
+    strategy = declared_strategy(issue)
+    for board in boards:
+        if board.get("skill_prefix") and strategy.startswith(str(board["skill_prefix"])):
+            return board
+    project = str(issue.get("project_id") or issue.get("project") or "")
+    title = project_titles.get(project, "")
+    for board in boards:
+        if title and title == board.get("project"):
+            return board
+    lanes = [board for board in boards if status in {column["id"] for column in board["columns"]}]
+    return lanes[0] if len(lanes) == 1 else None
+
+
+def declared_strategy(issue: dict) -> str:
+    """The skill a card names, from the line `ask` writes.
+
+    It wins over the runner's own choice, so `card` reports what was asked for
+    instead of guessing which entry of the menu the run used.
+    """
+    found = re.search(r"\*\*Strategy:\*\*\s*([A-Za-z0-9-]+)", str(issue.get("description") or ""))
+    return found.group(1) if found else ""
+
+
 def cmd_card(host: dict, args, groups) -> int:
     """What a card kept, and where it stopped."""
     live = Multica(host)
@@ -1290,6 +1326,32 @@ def cmd_card(host: dict, args, groups) -> int:
             name = str(attachment.get("filename") or "")
             if name:
                 present.add(name)
+    try:
+        titles = {str(row.get("id")): str(row.get("title")) for row in rows_of(live.json(["project", "list"]), "project list")}
+    except (Fail, KeyError):
+        titles = {}
+    board = lane_for_card(issue, status, titles)
+    lanes = [lane for lane in (load_board(path.stem) for path in sorted((ROOT / "boards").glob("*.json")))
+             if status in {column["id"] for column in lane["columns"]}]
+    if not board and lanes:
+        say(f"{issue.get('key') or issue_id}  status: {status}  lane: ambiguous")
+        say(f"lanes sharing this status: {', '.join(lane['board'] for lane in lanes)}")
+        say("the card names no strategy and sits in no lane project, so nothing here can say which menu judges it")
+        return 1
+    if board:
+        say(f"{issue.get('key') or issue_id}  status: {status}  lane: {board['board']}")
+        strategy = declared_strategy(issue)
+        if strategy:
+            say(f"strategy: {strategy}")
+        else:
+            say(f"strategy: none declared, so the runner names its choice in one line")
+        say(f"owes: one artifact from {len(board['menu'])} skills; kept {len(present)}")
+        for name in sorted(present):
+            say(f"  kept     {name}")
+        owed = not present and status in {"review", "done"}
+        if owed:
+            say(f"FAIL: the card reached {status!r} with no artifact attached")
+        return 1 if owed else 0
     aliases = load_aliases()
     declared, missing, legacy = artifact_report(present, groups, aliases)
     kept = len(declared) - len(missing)
