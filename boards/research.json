@@ -108,7 +108,7 @@
       "category": "started",
       "gate": false,
       "agent": "research-runner",
-      "instructions": "Load exactly one skill from the menu and produce its artifact for the decision the card names. Say in one line which skill you picked and why, then satisfy the criteria the skill declares: its reference and contract say what the artifact must contain, and a claim with no source is a gap, not a sentence.\n\nWhere the card is missing evidence, say so in the artifact rather than inventing it. A research artifact that states its unknowns is usable; one that fills them with plausible prose is worse than nothing, because someone will act on it.\n\nIf the card needs a second skill to answer, stop: park it, name the cards it should become, and let a person split it."
+      "instructions": "Load exactly one skill from the menu and produce its artifact for the decision the card names. Say in one line which skill you picked and why, then satisfy the criteria the skill declares: its reference and contract say what the artifact must contain, and a claim with no source is a gap, not a sentence.\n\nWhere the card is missing evidence, say so in the artifact rather than inventing it. A research artifact that states its unknowns is usable; one that fills them with plausible prose is worse than nothing, because someone will act on it.\n\nIf the card needs a second skill to answer, stop: park it, name the cards it should become, and let a person split it. Write the choice on its own line as `**Strategy:** <skill>` — the board reads that line to know which menu judges the artifact."
     },
     {
       "id": "review",

@@ -80,7 +80,7 @@
       "category": "started",
       "gate": false,
       "agent": "explore-runner",
-      "instructions": "Load exactly one skill from the menu and run it on what the card names. Say in one line which skill you picked and why it beats the neighbours in the menu, then do the work and attach the artifact the skill produces, under its own name.\n\nIf the card needs a second skill to answer, stop: park it, say in one line which cards it should become, and let a person split it. Two skills in one run produce two half-artifacts and no one can review either.\n\nRead what the card names before reading anything else; do not widen the scope to the whole repository, and do not fix anything you were not asked to judge."
+      "instructions": "Load exactly one skill from the menu and run it on what the card names. Say in one line which skill you picked and why it beats the neighbours in the menu, then do the work and attach the artifact the skill produces, under its own name.\n\nIf the card needs a second skill to answer, stop: park it, say in one line which cards it should become, and let a person split it. Two skills in one run produce two half-artifacts and no one can review either.\n\nRead what the card names before reading anything else; do not widen the scope to the whole repository, and do not fix anything you were not asked to judge. Write the choice on its own line as `**Strategy:** <skill>` — the board reads that line to know which menu judges the artifact."
     },
     {
       "id": "review",

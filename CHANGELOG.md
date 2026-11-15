@@ -4,6 +4,15 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.2] - 2026-11-15
+
+### Changed
+
+- **The `doing` column names the line the board reads.** It asked the runner to say
+  which skill it picked, and `card` parses `**Strategy:** <skill>`; the instruction
+  now spells that line out, so a run cannot satisfy the column and still leave the
+  card unplaceable.
+
 ## [0.3.1] - 2026-11-15
 
 ### Fixed

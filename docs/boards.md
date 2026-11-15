@@ -83,6 +83,13 @@ bucket (a person)  →  doing (one agent)  →  review (a person, can send back)
 and it loads **exactly one** skill from the menu. `review` is the only gate, and
 it answers one question: does the artifact settle what the card asked?
 
+**Which lane a card is on** is not a guess. Both lanes use `bucket`, `doing` and
+`review`, so the status cannot say: the strategy the card names decides
+(`stelow-product-*` is research, `stelow-workflow-*` is explore), then its project,
+and a card that neither places is reported as ambiguous rather than judged against
+whichever lane sorts first. That is why the `doing` column tells the runner to
+write `**Strategy:** <skill>` — that line is what `card` reads back.
+
 ## Why a board and not a chat
 
 A card names three things a chat message does not: which skill ran, what artifact
