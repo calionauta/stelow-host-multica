@@ -807,6 +807,54 @@ def flow_gaps(plan: dict, edges: dict[str, dict[str, list[str]]], universe: dict
     return gaps
 
 
+HUMAN_GATE_MARKER = "needs-human"
+WAITING_NUDGE = (
+    "This card is parked for a human ruling. Check for an answer; if there is "
+    "none, say in one line who owes what and re-arm instead of waiting silently."
+)
+
+
+def gate_ids(groups) -> set[str]:
+    return {str(group["id"]) for group in groups if group.get("gate")}
+
+
+def board_findings(issues, gates, known, running, labels):
+    """Cards that are waiting invisibly.
+
+    Pure, so it is testable without a workspace: `running` is the set of issue
+    ids with an active run and `labels` maps an issue id to its label names.
+
+    Four states exist and three of them are invisible on the board:
+
+    - a card in a gate column with no run and no marker is waiting on a person
+      and looks exactly like a run that died. This is how CAL-52 sat in
+      `diff_gate` with nothing on it saying who owed what;
+    - a card in an agent column with no run and no marker is an orphan: its run
+      ended and nothing will pick it up;
+    - a marker on a card whose run is active is stale;
+    - a marker with no run in a gate column is the healthy waiting state.
+    """
+    unmarked, orphans, stale = [], [], []
+    for issue in issues:
+        issue_id = str(issue.get("id") or "")
+        status = str(issue.get("status") or "")
+        if not issue_id or status not in known:
+            continue
+        key = issue.get("key") or issue_id
+        marked = HUMAN_GATE_MARKER in (labels.get(issue_id) or set())
+        active = issue_id in running
+        if status in gates:
+            if not active and not marked:
+                unmarked.append(key)
+            elif active and marked:
+                stale.append(key)
+        elif not active and not marked:
+            orphans.append(key)
+        elif active and marked:
+            stale.append(key)
+    return unmarked, orphans, stale
+
+
 def cmd_doctor(host: dict, args, groups, lock) -> int:
     offline = getattr(args, "offline", False)
     checks: list[tuple[str, bool, str]] = []
@@ -864,6 +912,48 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             check("planned skills installed", not missing, ", ".join(missing[:4]))
         except Fail as exc:
             check("CLI authorized", False, str(exc).splitlines()[0][:120])
+    # 9. nothing on the board is waiting invisibly
+    if found and not offline and host["multica"].get("project_id"):
+        live = Multica(host)
+        try:
+            issues = Multica._rows(live.json(["issue", "list"]), "issue list")
+        except Fail as exc:
+            check("board readable", False, str(exc).splitlines()[0][:120])
+            issues = None
+        if issues is not None:
+            running, labels = set(), {}
+            for issue in issues:
+                issue_id = str(issue.get("id") or "")
+                if not issue_id:
+                    continue
+                try:
+                    runs = Multica._rows(live.json(["issue", "runs", issue_id, "--active"]), "issue runs")
+                except Fail:
+                    runs = []
+                if runs:
+                    running.add(issue_id)
+                try:
+                    rows = Multica._rows(live.json(["issue", "label", "list", issue_id]), "issue label list")
+                except Fail:
+                    rows = []
+                labels[issue_id] = {str(row.get("name") or "") for row in rows if row.get("name")}
+            known = {str(group["id"]) for group in groups}
+            unmarked, orphans, stale = board_findings(issues, gate_ids(groups), known, running, labels)
+            check("no gate card waits unmarked", not unmarked, "waiting on a person: " + ", ".join(unmarked[:4]))
+            check("no orphaned card", not orphans, "run ended, nothing queued: " + ", ".join(orphans[:4]))
+            check("no stale waiting marker", not stale, ", ".join(stale[:4]))
+            if getattr(args, "fix", False) and unmarked:
+                by_key = {issue.get("key"): issue for issue in issues}
+                marked = 0
+                for key in unmarked:
+                    issue_id = str((by_key.get(key) or {}).get("id") or "")
+                    if not issue_id:
+                        continue
+                    live.run(["issue", "label", "add", issue_id, HUMAN_GATE_MARKER], can_fail=True)
+                    live.run(["issue", "wakeup", "create", issue_id, "--after", "45m",
+                              "--instruction", WAITING_NUDGE], can_fail=True)
+                    marked += 1
+                say(f"fix: marked {marked} waiting card(s) with {HUMAN_GATE_MARKER} and a 45m nudge")
     if offline:
         check("offline", True, "network and live-workspace checks skipped")
 
@@ -1108,7 +1198,8 @@ def main(argv: list[str]) -> int:
     sub.add_parser("apply", help="converge the workspace", parents=[common])
     sub.add_parser("verify", help="assert the live workspace matches the plan", parents=[common])
     sub.add_parser("status", help="compact live summary", parents=[common])
-    sub.add_parser("doctor", help="check the environment, the pin, and stage ownership", parents=[common])
+    doctor = sub.add_parser("doctor", help="check the environment, the pin, stage ownership, and the board", parents=[common])
+    doctor.add_argument("--fix", action="store_true", help="mark cards that wait on a person without saying so")
     args = parser.parse_args(argv)
 
     try:

@@ -4,6 +4,31 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.5] - 2026-11-15
+
+A card that waits on a person used to look exactly like a run that died. On the
+second smoke run CAL-52 sat in `diff_gate` with no run, no marker and no nudge
+until someone read the thread by hand.
+
+### Added
+
+- **`doctor` reads the board and names the invisible states.** A card in a gate
+  column with no run and no marker (waiting, unmarked), a card in an agent column
+  with no run and no marker (orphaned), and a marker on a card that is running
+  (stale). All three fail `doctor`. The check is CLI reads only: it starts no
+  agent, so it costs no tokens and can run on a timer.
+
+- **`doctor --fix`** marks the cards that wait on a person and arms one 45-minute
+  nudge on each, so a forgotten card comes back on its own.
+
+- **`stages/columns.md` now ends every gate section the same way**: mark the card,
+  arm one nudge, and let the person who rules remove the marker.
+
+- **`docs/host-contract.md` says what a question is on this host**: a comment (the
+  content), a label plus wakeup (the state), and a select property only when the
+  same choice repeats. Multica has no ask-with-options call, and a question
+  encoded as prose alone is the failure this release removes.
+
 ## [0.1.4] - 2026-11-15
 
 Three rules taken from the smoke card's file list.

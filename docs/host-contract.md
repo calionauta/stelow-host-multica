@@ -79,6 +79,28 @@ asserts a host's declaration is coherent (no host claims `review_mode`;
   (issue comments), `artifacts: file`; see `agents/_adapter.md`.
 - Any CLI-only host → `position: file`, `handoff: file`, and it works today.
 
+## What a question looks like on the board
+
+Multica has no "ask with N options" call. What it has, and what this host uses:
+
+| primitive | what it is good for | what it cannot do |
+|---|---|---|
+| comment | the question's content, the evidence, the reasoning | cannot mark state, cannot be filtered |
+| label | state that a person reads at a glance (`needs-human`) | no value, no history |
+| select property | a fixed choice, filterable and machine-readable (`approve`, `send-back`) | the option set is workspace-level, not per card |
+| saved view | grouping: one screen for every card carrying a label | read-only projection |
+| wakeup | time: run again in 45m, with an instruction | cannot read the answer for you |
+| autopilot | a scheduled check, and a script one costs no tokens | not a decision |
+
+So a question is three things, not one: the **comment** carries what is being
+asked, the **label plus wakeup** carry that it is waiting and that it will come
+back, and a **select property** is worth adding only when the same choice repeats
+often enough that typing it in prose is the waste.
+
+The thing this host refuses to do is encode a question as a comment alone. A card
+whose only signal is prose is a card that waits until somebody scrolls past it,
+which is the failure the first smoke run produced twice.
+
 ## What each host actually has to declare
 
 Five fields. Not an interface, not a lifecycle:

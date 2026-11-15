@@ -107,6 +107,18 @@ requirement. Cite the spec's ids; a requirement you cannot cite is a requirement
 nobody shipped. Attach `18-audit-table.md`, then finish the issue, or send it
 back with the gaps.
 
+## When the card waits on a person
+
+Every gate section ends the same way: mark the card and arm one nudge, because a
+card waiting on a ruling and a run that died look identical on the board.
+
+    multica issue label add <this issue> needs-human
+    multica issue wakeup create <this issue> --after 45m --instruction "Say in one line who owes what, or close the loop."
+
+The person who rules removes the marker. `stelow-host doctor` fails when a card
+sits in a gate column with no marker, or on an agent column with no run and no
+marker, and `doctor --fix` marks the first case.
+
 ## Artifacts by column
 
 | column | artifacts (attached to the outcome comment) |

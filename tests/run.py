@@ -767,6 +767,14 @@ class TestAskingLeavesATrace(unittest.TestCase):
         # code, which hands the human engineering work and stops the card.
         self.assertIn("Park only when the answer changes what ships", self.adapter)
 
+    def test_a_gate_column_tells_the_agent_to_mark_the_wait(self):
+        # Catches: a card parked for a ruling with nothing on it saying so,
+        # which is how CAL-52 sat in diff_gate until someone noticed.
+        section = (REPO / "stages" / "columns.md").read_text()
+        self.assertIn("## When the card waits on a person", section)
+        self.assertIn("issue label add <this issue> needs-human", section)
+        self.assertIn("issue wakeup create <this issue> --after 45m", section)
+
     def test_the_adapter_carries_the_density_rules(self):
         for rule in ("<nn>-<kind>.<ext>", "## Tests run once", "## Asking is a state"):
             self.assertIn(rule, self.adapter, f"the adapter dropped {rule!r}")
@@ -788,6 +796,46 @@ class TestAskingLeavesATrace(unittest.TestCase):
         md = (REPO / "stages" / "columns.md").read_text()
         self.assertIn("Mint the requirement ids here", md)
         self.assertIn("Cite the spec's ids", md)
+
+
+class TestBoardFindings(unittest.TestCase):
+    """Four card states, three of which look dead on the board."""
+
+    gates = {"product_gate", "diff_gate"}
+    known = {"build", "verify", "product_gate", "diff_gate"}
+
+    def findings(self, issues, running=(), labels=None):
+        return HOST.board_findings(issues, self.gates, self.known, set(running), labels or {})
+
+    def test_a_gate_card_waiting_on_a_person_unmarked(self):
+        # This is CAL-52 in diff_gate: no run, no marker, indistinguishable
+        # from a run that died.
+        issues = [{"id": "i1", "key": "CAL-52", "status": "diff_gate"}]
+        unmarked, orphans, stale = self.findings(issues)
+        self.assertEqual(unmarked, ["CAL-52"])
+        self.assertEqual((orphans, stale), ([], []))
+
+    def test_a_marked_gate_card_is_the_healthy_state(self):
+        issues = [{"id": "i1", "key": "CAL-52", "status": "diff_gate"}]
+        unmarked, orphans, stale = self.findings(issues, labels={"i1": {"needs-human"}})
+        self.assertEqual((unmarked, orphans, stale), ([], [], []))
+
+    def test_an_agent_column_with_no_run_is_an_orphan(self):
+        # The other silent death: the run ended and nothing queued a successor.
+        issues = [{"id": "i2", "key": "CAL-53", "status": "build"}]
+        unmarked, orphans, _ = self.findings(issues)
+        self.assertEqual(orphans, ["CAL-53"])
+        self.assertEqual(unmarked, [])
+
+    def test_a_marker_on_a_running_card_is_stale(self):
+        issues = [{"id": "i3", "key": "CAL-54", "status": "build"}]
+        _, _, stale = self.findings(issues, running={"i3"}, labels={"i3": {"needs-human"}})
+        self.assertEqual(stale, ["CAL-54"])
+
+    def test_cards_outside_the_workflow_are_ignored(self):
+        # A backlog card is not a stalled stage.
+        issues = [{"id": "i4", "key": "CAL-55", "status": "todo"}]
+        self.assertEqual(self.findings(issues), ([], [], []))
 
 
 class TestHostConfigEnvironment(unittest.TestCase):
