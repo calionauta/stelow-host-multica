@@ -219,7 +219,13 @@ class FakeMultica:
             issue["status"] = args[3]
             return 0, json.dumps(issue), ""
         if args[:2] == ["issue-status", "list"]:
-            return 0, json.dumps([{"key": key, "name": key} for key in self.state.setdefault("statuses", [])]), ""
+            over = self.state.setdefault("status_names", {})
+            return 0, json.dumps([{"key": key, "name": over.get(key, key)}
+                                  for key in self.state.setdefault("statuses", [])]), ""
+        if args[:2] == ["issue-status", "update"]:
+            key = args[2]
+            self.state.setdefault("status_names", {})[key] = args[args.index("--name") + 1]
+            return 0, json.dumps({"key": key}), ""
         if args[:2] == ["issue-status", "create"]:
             key = args[args.index("--key") + 1]
             self.state.setdefault("statuses", []).append(key)
@@ -239,8 +245,8 @@ class FakeMultica:
             return 0, json.dumps({"ok": True}), ""
         raise AssertionError("unexpected command: %s" % args)
 
-    def json(self, args):
-        code, out, err = self.run(args)
+    def json(self, args, can_fail=False):
+        code, out, err = self.run(args, can_fail=can_fail)
         if code != 0:
             raise HOST.Fail("fake: %s" % err, code=1)
         return json.loads(out)
@@ -540,6 +546,36 @@ class TestDoctor(HostCase):
         self.host["multica"]["runtime_id"] = ""
         code = HOST.cmd_doctor(self.host, self.args(offline=True), self.groups, self.lock)
         self.assertEqual(code, 1)
+
+
+class TestBoardNames(HostCase):
+    def test_every_gate_is_named_after_the_person_who_acts(self):
+        """A gate named like one more agent stage is a card nobody picks up: CAL-57
+        sat at "Diff gate" with no marker and an agent as assignee."""
+        names = HOST.board_names(self.groups)
+        self.assertEqual(names["diff_gate"], "Your call · diff")
+        self.assertEqual(names["product_gate"], "Your call · product")
+        for key in ("interface_gate", "tech_gate"):
+            self.assertIn(key, names)
+
+    def test_agent_stages_keep_their_name(self):
+        """Marking every column would cost the marker its meaning."""
+        names = HOST.board_names(self.groups)
+        self.assertNotIn("build", names)
+        self.assertNotIn("verify", names)
+
+    def test_decorate_renames_only_what_drifted(self):
+        fake = FakeMultica(self.host)
+        gates = list(HOST.board_names(self.groups))
+        fake.state["statuses"] = gates + ["build"]
+        fake.state["status_names"] = {
+            key: "Your call · " + key.replace("_gate", "") for key in gates if key != "product_gate"
+        }
+        changed = HOST.decorate_statuses(fake, self.groups)
+        self.assertEqual(changed, ["product_gate"])
+        updates = [c for c in fake.calls if c[:2] == ["issue-status", "update"]]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("Your call · product", updates[0])
 
 
 class TestRedProof(HostCase):

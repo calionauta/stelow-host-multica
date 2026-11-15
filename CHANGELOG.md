@@ -4,6 +4,20 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.5.0] - 2026-11-15
+
+### Added
+
+- **Gate columns say who acts: `Your call · product | interface | tech | diff`.**
+  "Diff gate" read like one more agent stage, so a card waiting on a person looked
+  like a card in progress. `columns.json` declares `board_name`, `apply` puts it on the
+  workspace status (`issue-status update --name` — the key never moves, so no card is
+  migrated), and `doctor` fails when a gate status has drifted back.
+
+### Changed
+
+- `doctor --fix` renames drifted gate statuses along with the rest of its repairs.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added
