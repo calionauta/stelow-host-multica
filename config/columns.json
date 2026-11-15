@@ -198,5 +198,9 @@
         "18-audit-table.md"
       ]
     }
-  ]
+  ],
+  "policy": {
+    "max_back_edges": 2,
+    "_comment": "An audit that sends a card back more than this many times parks it for a person instead of opening another round: at that point the loop is deciding, not the reviewer."
+  }
 }

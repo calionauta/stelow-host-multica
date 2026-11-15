@@ -103,7 +103,9 @@ conditions and any nit carried forward, then finish or send it back to verify.
 ## audit
 
 Walk the proposal's requirements against what shipped, with evidence per
-requirement. Cite the spec's ids; a requirement you cannot cite is a requirement
+requirement. If this is the **third** pass through build (two back-edges
+already spent), stop and park for a person with the rows that remain instead of
+opening another round: a fourth round is the loop deciding, not the reviewer. Cite the spec's ids; a requirement you cannot cite is a requirement
 nobody shipped. Attach `18-audit-table.md`, then finish the issue, or send it
 back with the gaps.
 

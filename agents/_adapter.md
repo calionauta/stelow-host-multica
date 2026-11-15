@@ -109,6 +109,12 @@ position marker makes the reader reconstruct the chain before they can read the
 outcome. Do not narrate progress. If you cannot proceed, move the issue
 to its blocked step, or leave it where it is and post the blocker.
 
+## A back edge has a budget
+
+Two rounds back to the same column is what the loop is for. A third one is
+the loop deciding instead of a person: park the card, marked and nudged, with
+the rows that remain, and let someone rule on shipping with them.
+
 ## Missing input is not a rejection
 
 Send an issue back when the work you received is wrong against the stage's exit

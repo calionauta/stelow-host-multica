@@ -767,6 +767,14 @@ class TestAskingLeavesATrace(unittest.TestCase):
         # code, which hands the human engineering work and stops the card.
         self.assertIn("Park only when the answer changes what ships", self.adapter)
 
+    def test_the_back_edge_has_a_budget(self):
+        # Catches: an audit that keeps sending the same card back, which is a
+        # loop billing a project for a decision a person owes.
+        policy = json.loads((REPO / "config" / "columns.json").read_text())["policy"]
+        self.assertEqual(policy["max_back_edges"], 2)
+        self.assertIn("third** pass through build", (REPO / "stages" / "columns.md").read_text())
+        self.assertIn("## A back edge has a budget", self.adapter)
+
     def test_a_gate_column_tells_the_agent_to_mark_the_wait(self):
         # Catches: a card parked for a ruling with nothing on it saying so,
         # which is how CAL-52 sat in diff_gate until someone noticed.

@@ -4,6 +4,17 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.7] - 2026-11-15
+
+### Added
+
+- **A back edge has a budget: two rounds.** The smoke card went audit to build
+twice, and the second audit found two more real defects, so the loop was earning
+its keep. A third round is no longer the reviewer deciding; it parks the card for
+a person with the rows that remain. `config/columns.json` carries
+`policy.max_back_edges`, the audit section and the adapter both say it, and a test
+holds the number and the wording together.
+
 ## [0.1.6] - 2026-11-15
 
 ### Added
