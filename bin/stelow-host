@@ -1142,6 +1142,20 @@ def load_aliases() -> dict:
         return {}
 
 
+def active_stamps(runs: list[dict]) -> tuple[str, str]:
+    """The oldest started stamp and the oldest queued stamp among the active runs.
+
+    Blanks are dropped rather than compared: a run that is still queued has no
+    `started_at`, so `min()` over the raw values returned "" and a run that had
+    been going for an hour hid behind it.
+    """
+    started = [stamp for stamp in (str(run.get("started_at") or "") for run in runs) if stamp]
+    queued = [stamp for stamp in
+              (str(run.get("created_at") or "") for run in runs
+               if str(run.get("status") or "") == "queued") if stamp]
+    return (min(started) if started else ""), (min(queued) if queued else "")
+
+
 def zombie_runs(issues, active_start, minutes, now=None):
     """Cards whose active run has been "running" longer than `minutes`.
 
@@ -1433,7 +1447,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             check("board readable", False, str(exc).splitlines()[0][:120])
             issues = None
         if issues is not None:
-            running, labels, spent, active_start = set(), {}, {}, {}
+            running, labels, spent, active_start, queued_since = set(), {}, {}, {}, {}
             limit = int(load_policy().get("max_back_edges", 2))
             # `todo` is the entry status every workflow starts from and it has no
             # handler, so a card left there does nothing at all. It is not a group
@@ -1456,9 +1470,11 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     runs = []
                 if runs:
                     running.add(issue_id)
-                    started = min(str(run.get("started_at") or "") for run in runs)
+                    started, queued = active_stamps(runs)
                     if started:
                         active_start[issue_id] = started
+                    if queued:
+                        queued_since[issue_id] = queued
                 try:
                     rows = rows_of(live.json(["issue", "label", "list", issue_id]), "issue label list")
                 except Fail:
@@ -1491,13 +1507,21 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             stalled = stalled_cards(issues, known, idle_limit)
             idle_detail = ", ".join(f"{key} ({status}, {hours}h)" for key, status, hours in stalled[:4])
             check(f"no card idle beyond {idle_limit:g}h", not stalled, idle_detail)
-            run_limit = float(load_policy().get("max_run_minutes", 45))
+            run_limit = float(load_policy().get("max_run_minutes", 90))
+            queue_limit = float(load_policy().get("max_queue_minutes", 10))
             zombies = zombie_runs(issues, active_start, run_limit)
             zombie_detail = ", ".join(f"{key} ({age:g} min)" for key, age in zombies[:4])
             check(f"no run older than {run_limit:g} min", not zombies, zombie_detail)
+            # A queued run that never starts is invisible everywhere else: it counts
+            # as active, so the card is no orphan, and it has no `started_at`, so it
+            # is no zombie. A daemon restart stranded a card exactly this way.
+            stranded = zombie_runs(issues, queued_since, queue_limit)
+            stranded_detail = ", ".join(f"{key} ({age:g} min)" for key, age in stranded[:4])
+            check(f"no run queued longer than {queue_limit:g} min", not stranded, stranded_detail)
             stale_idle = [key for key, _status, _hours in stalled]
             park = unmarked + [key for key in spent if key not in unmarked]
             park += [key for key, _age in zombies if key not in park]
+            park += [key for key, _age in stranded if key not in park]
             park += [key for key in stale_idle if key not in park]
             if getattr(args, "fix", False):
                 by_key = {issue.get("key"): issue for issue in issues}

@@ -1053,6 +1053,28 @@ class TestStalledCards(unittest.TestCase):
         self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now), [])
 
 
+class TestActiveStamps(unittest.TestCase):
+    def test_a_queued_run_does_not_hide_a_long_running_one(self):
+        # Catches the live case: a rerun was queued behind a run that had been going
+        # for an hour, `min()` over the raw stamps returned "", and the zombie check
+        # silently skipped the card.
+        runs = [{"status": "queued", "started_at": None, "created_at": "2026-11-15T22:12:28Z"},
+                {"status": "running", "started_at": "2026-11-15T21:16:05Z",
+                 "created_at": "2026-11-15T21:16:00Z"}]
+        started, queued = HOST.active_stamps(runs)
+        self.assertEqual(started, "2026-11-15T21:16:05Z")
+        self.assertEqual(queued, "2026-11-15T22:12:28Z")
+
+    def test_a_running_only_set_has_no_queue_stamp(self):
+        # Catches: treating every active run as queued, which would flag a healthy
+        # build as a stranded queue after ten minutes.
+        runs = [{"status": "running", "started_at": "2026-11-15T21:16:05Z"}]
+        self.assertEqual(HOST.active_stamps(runs), ("2026-11-15T21:16:05Z", ""))
+
+    def test_a_run_with_no_stamps_at_all_yields_nothing(self):
+        self.assertEqual(HOST.active_stamps([{"status": "queued"}]), ("", ""))
+
+
 class TestZombieRuns(unittest.TestCase):
     """A run whose process died is reported as running, so nothing notices."""
 

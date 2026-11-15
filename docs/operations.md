@@ -84,7 +84,8 @@ from the catalog, that every stage's owning skill is loaded by the agent that
 handles that stage, that every back-edge matches the transitions table, that the
 skills are publicly importable, that the CLI is authorized (`--offline` skips
 the last two), that nothing on the board waits unmarked or idle, and that no run
-has been reported `running` past `policy.max_run_minutes`.
+has been reported `running` past `policy.max_run_minutes` or `queued` past
+`policy.max_queue_minutes`.
 
 The owner check is the one that catches real drift. `stage-catalog.json` says
 which skill each stage dispatches to; a column's agent must load that skill, or
@@ -171,6 +172,7 @@ running cards rather than by reading code:
 | an Explore card was told it owed `01-spec-product.md` … `18-audit-table.md` | `card` compared every card against the chain's artifact list | a lane card owes one artifact; `card` names the lane and the strategy it judged it against |
 | a Research card reported `lane: explore` | both lanes use `bucket`/`doing`/`review`, and the first board alphabetically answered | the strategy decides, then the project; a card neither places is refused as ambiguous |
 | `doing` said "load exactly one skill from the menu" and carried no menu | the working column's text was pushed without the menu block, and only a helper the doctor used assembled it | `board_plan` appends the menu; the step is 2696 characters on the research lane |
+| a daemon restart cancelled the run and left a queued replacement that never started | a queued run counts as active (so the card is no orphan) and has no `started_at` (so it is no zombie) | `doctor` compares a queued run's `created_at` with `policy.max_queue_minutes`; the card was resumed by rerunning the failed run |
 | a run sat `running` for half an hour after its process died | a tracker reports a run as running until something ends it | `doctor` compares `started_at` with `policy.max_run_minutes`; `--fix` marks and re-arms |
 
 The lesson repeats the one above: a card that waits with nothing saying so is the

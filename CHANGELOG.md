@@ -4,6 +4,18 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.9] - 2026-11-15
+
+### Fixed
+
+- **A queued run that never starts is now visible.** It counts as active, so the
+  card is no orphan; it has no `started_at`, so it is no zombie either. A daemon
+  restart left one holding a card in `verify` with nothing to see. `doctor` compares
+  a queued run's `created_at` against `policy.max_queue_minutes` (10).
+- **A queued run could hide a long-running one.** The zombie check took `min()` over
+  raw `started_at` values, so a blank from the queued run won and the card was
+  skipped.
+
 ## [0.3.8] - 2026-11-15
 
 ### Fixed
