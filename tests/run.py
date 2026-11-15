@@ -630,5 +630,81 @@ class TestVerify(HostCase):
         return fake
 
 
+class TestStageInstructionGuards(unittest.TestCase):
+    """The instructions are the contract; these keep it from being edited away.
+
+    Each test names what it catches when someone rewrites the prose.
+    """
+
+    def setUp(self):
+        self.adapter = (REPO / "agents" / "_adapter.md").read_text()
+        self.columns = (REPO / "stages" / "columns.md").read_text()
+
+    def section(self, name):
+        body = self.columns.split("\n## " + name + "\n", 1)[1]
+        return body.split("\n## ", 1)[0]
+
+    def test_artifacts_leave_as_attachments(self):
+        # Catches: an edit that lets a stage paste its artifact into the comment
+        # body again. The smoke card shipped wireframes, a contrast table and a
+        # scope map as prose, and nothing downstream could download them.
+        self.assertIn("--attachment", self.adapter)
+        self.assertIn("Artifacts leave as files", self.adapter)
+        self.assertIn("attached", self.section("framing"))
+        self.assertIn("attached", self.section("build"))
+        self.assertIn("Attach the audit table", self.section("audit"))
+        for gate in ("product_gate", "interface_gate"):
+            self.assertIn("attached", self.section(gate), gate)
+
+    def test_verify_does_not_run_the_whole_suite(self):
+        # Catches: restoring "Run the full test suite" in the verify column,
+        # which held one card for fifty minutes and reported what the narrow
+        # run already knew.
+        body = self.section("verify")
+        self.assertNotIn("Run the full test suite", body)
+        self.assertIn("CI's job", body)
+        self.assertIn("which command you ran", body)
+
+    def test_every_card_message_is_english(self):
+        # Catches: the adapter losing the language rule, which is how one card
+        # ended up with an English plan and Portuguese gate answers.
+        self.assertIn("Everything you write on the card is English", self.adapter)
+
+    def test_no_command_outlives_the_turn(self):
+        # Catches: dropping the command cap. Verify once sat fifty minutes inside
+        # one uncapped suite and could not read the steering message it was sent.
+        self.assertIn("No command outlives your turn", self.adapter)
+        self.assertIn("timeout 300", self.adapter)
+        self.assertIn("timeout 300", self.section("verify"))
+
+    def test_a_long_stage_reports_liveness(self):
+        # Catches: dropping the interim-line rule. Design once ran 28 minutes
+        # with nothing on the card, and the reviewer had to ask if it was alive.
+        self.assertIn("Silence has a limit", self.adapter)
+        self.assertIn("interim line", self.adapter)
+
+
+class TestRepositoryIsEnglish(unittest.TestCase):
+    def test_no_portuguese_diacritics(self):
+        # Catches: a Portuguese paragraph copied back in. The repository is
+        # English end to end; the accented set is what a translation leaves behind.
+        # Spelled by codepoint so this file stays ASCII and does not trip itself.
+        accents = "".join(chr(code) for code in (
+            225, 224, 226, 227, 233, 234, 237, 243, 244, 245, 250, 231,
+            193, 192, 194, 195, 201, 202, 205, 211, 212, 213, 218, 199,
+        ))
+        offenders = []
+        for path in sorted(REPO.rglob("*")):
+            skip = (".git/", "node_modules", ".stelow-cache")
+            if not path.is_file() or any(part in str(path) for part in skip):
+                continue
+            if path.suffix not in {".md", ".json", ".py", ".yml", ".yaml"} and path.name != "stelow-host":
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if any(ch in accents for ch in text):
+                offenders.append(str(path.relative_to(REPO)))
+        self.assertEqual(offenders, [], "Portuguese text found in: " + ", ".join(offenders))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

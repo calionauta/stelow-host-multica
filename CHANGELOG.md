@@ -4,6 +4,44 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.1] - 2026-11-15
+
+The first end-to-end card found four things the contract left to chance.
+
+### Fixed
+
+- **Artifacts were pasted into comments.** A design stage shipped wireframes, a
+  contrast table and a scope map as a 6,700-character comment; the next column
+  and the person reviewing could neither download them nor diff the next
+  version. `_adapter.md` now says artifacts leave as files (`--attachment`),
+  the body carries the decision and the file list, and every gate column reads
+  the attachments rather than the prose.
+
+- **Verify ran the whole suite.** The column literally instructed it, and one
+  card sat in verify for fifty minutes while a narrow run would have reported
+  the same result in three. Verify now picks the tests that can catch the
+  change, names the command and its result, and reaches for the full suite only
+  when the change is cross-cutting.
+
+- **No command outlived the turn.** The same run could not read the steering
+  message sent to it, because it was inside one uncapped command. Every command
+  is now capped (`timeout 300`), and anything longer runs in the background.
+
+- **A long stage looked dead.** Design ran twenty-eight minutes with nothing on
+  the card and the reviewer had to ask whether it was alive. One interim line
+  per ten minutes is now part of the contract.
+
+### Added
+
+- **The card is English.** Comments, artifacts, commit subjects and PR
+  descriptions. One card ended up with an English plan, an English critique and
+  Portuguese gate answers.
+
+- **Five guards in `tests/run.py`**: the attachment rule, the scoped verify, the
+  English rule, the liveness line and the command cap are asserted against the
+  instruction files, plus a repository-wide check that no Portuguese text comes
+  back. 43 checks.
+
 ## [0.1.0] - 2026-11-15
 
 First release. A Multica workspace can now run the stelow workflow with nothing

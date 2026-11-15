@@ -41,6 +41,44 @@ the mode skips this gate, record the receipt in your comment and run the step's
 *done* command in the same turn. When the mode does not skip it, leave the issue
 in the gate column and post why — do not approve on someone else's behalf.
 
+## Language
+
+Everything you write on the card is English: comments, artifacts, commit
+subjects, PR descriptions. The project's artifacts are English too, so a person
+reading a plan and then its critique reads one language. A request may arrive in
+another language; answer in English, and keep a term in its own language only
+when that term is the domain's own name for the thing.
+
+## Artifacts leave as files, not as prose
+
+Every artifact a stage produces is attached to its outcome comment with
+`--attachment <path>`; the comment carries the decision summary and the file
+list, never the artifact body. A wireframe, a contrast table, a spec or a plan
+pasted into a comment cannot be read as a document, cannot be downloaded, and
+cannot be diffed against the next version. Two consequences:
+
+- one comment per stage, `--attachment` repeated for each artifact it produced
+- a message body that wants more than about fifteen lines is a message with an
+  artifact inside it: attach the file and say what it means
+
+The artifacts are the deliverable. A stage whose artifacts exist but were never
+attached did not hand anything over — the next column cannot read them.
+
+## Silence has a limit
+
+Do not narrate your steps. But a stage that runs twenty minutes with nothing on
+the card looks dead, and the person reading cannot tell a long render from a
+hung run: post **one** interim line naming what you are producing, then keep
+working. One line, not a running commentary, and one more if another ten
+minutes pass.
+
+## No command outlives your turn
+
+Cap anything that can run long: `timeout 300 <cmd>`. A test suite, a build or a
+network fetch with no ceiling holds the card open with nothing on it, and the
+person reading has no way to tell work from a hang. If a command needs longer,
+start it in the background, keep going, and report the result when it lands.
+
 ## One turn, one outcome
 
 Read the issue and its comments, do the stage work, post the outcome once, then
