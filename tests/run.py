@@ -771,6 +771,17 @@ class TestAskingLeavesATrace(unittest.TestCase):
         for rule in ("<nn>-<kind>.<ext>", "## Tests run once", "## Asking is a state"):
             self.assertIn(rule, self.adapter, f"the adapter dropped {rule!r}")
 
+    def test_artifact_revisions_do_not_multiply_names(self):
+        # Catches: `spec-tech_v1.md` and `spec-tech_v2.md` both attached to one
+        # card, which is a diff nobody can make.
+        self.assertIn("Never put a version suffix", self.adapter)
+        self.assertIn("carried forward", self.adapter)
+
+    def test_the_outcome_comment_states_the_position(self):
+        # Catches: a card with twenty comments where the reader has to
+        # reconstruct the chain before reading the outcome.
+        self.assertIn("stage 7/18 - tech", self.adapter)
+
     def test_requirement_ids_are_minted_once(self):
         # Catches: audit renumbering requirements it cannot trace back to the
         # spec, which turns traceability into a translation exercise.

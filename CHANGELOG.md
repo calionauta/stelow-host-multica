@@ -4,6 +4,21 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.4] - 2026-11-15
+
+Three rules taken from the smoke card's file list.
+
+### Added
+
+- **No version suffix in an artifact name.** `spec-tech_v1.md` and
+  `spec-tech_v2.md` both ended up on the card, which is a diff nobody can make. A
+  revision replaces the file under the same name; an earlier artifact that still
+  applies is marked `carried forward: <name>` rather than attached twice.
+
+- **The outcome comment opens with the position**: `stage 7/18 - tech`. A card
+  with twenty comments and no position marker makes the reader reconstruct the
+  chain before they can read the outcome.
+
 ## [0.1.3] - 2026-11-15
 
 Second smoke run, eleven gaps, all fixed here.

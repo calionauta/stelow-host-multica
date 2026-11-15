@@ -79,7 +79,11 @@ the stelow skill already uses, and `.md` for prose or `.json` for data. The
 prefix is what makes the card readable — attachments then sort in the order the
 work happened, prose and data separate by extension, and a reviewer sees at a
 glance which stage produced which file. Your column lists the artifacts it
-expects; produce those names, not your own.
+expects; produce those names, not your own. Never put a version suffix in the
+name: a revision replaces the file under the same name, because `spec-tech_v2.md`
+sitting beside `spec-tech_v1.md` on a card is a diff nobody can make. Attach only
+what this stage produced; when an earlier artifact still applies, say
+`carried forward: <name>` in one line instead of attaching it again.
 
 ## Tests run once
 
@@ -99,7 +103,10 @@ start it in the background, keep going, and report the result when it lands.
 ## One turn, one outcome
 
 Read the issue and its comments, do the stage work, post the outcome once, then
-move the issue. Do not narrate progress. If you cannot proceed, move the issue
+move the issue. Open that comment with where the card is, one line, in the same
+shape every time: `stage 7/18 - tech`. A card with twenty comments and no
+position marker makes the reader reconstruct the chain before they can read the
+outcome. Do not narrate progress. If you cannot proceed, move the issue
 to its blocked step, or leave it where it is and post the blocker.
 
 ## Missing input is not a rejection
