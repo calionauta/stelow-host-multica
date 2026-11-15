@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "stelow": {
+    "repo": "calionauta/stelow",
+    "ref": "main",
+    "skill_root": "skills"
+  },
+  "multica": {
+    "bin": "multica",
+    "workspace_id": "",
+    "project_id": "",
+    "runtime_id": "",
+    "model": "",
+    "thinking_level": ""
+  },
+  "defaults": {
+    "intent": "feature",
+    "gates": "human",
+    "workflow_prefix": "stelow"
+  },
+  "agents": {
+    "name_prefix": "stelow",
+    "permission": "private",
+    "description_suffix": "(stelow)"
+  },
+  "migrate": {
+    "_comment": "Passed as --map old=new when switching a live project. Opt-in via --migrate.",
+    "backlog": "todo",
+    "in_progress": "framing",
+    "in_review": "verify",
+    "blocked": "framing"
+  }
+}

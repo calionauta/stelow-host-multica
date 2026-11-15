@@ -1,0 +1,737 @@
+#!/usr/bin/env python3
+"""stelow-host-multica — provision stelow's workflow onto a Multica workspace.
+
+Reads the host's opinion (config/columns.json), the pinned stelow stage model
+(stages.yaml, fetched at the ref in stelow.lock.json) and drives the Multica CLI
+to create skills, agents, one workflow and the project binding.
+
+    ./bin/stelow-host sync     # fetch + pin stages.yaml
+    ./bin/stelow-host plan     # what would change (no writes)
+    ./bin/stelow-host apply    # converge the workspace
+    ./bin/stelow-host verify   # assert the live workspace matches the plan
+    ./bin/stelow-host status   # compact live summary
+
+Python 3 stdlib only. Every Multica call is a subprocess of the real CLI.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CACHE = ROOT / ".stelow-cache"
+LOCK = ROOT / "stelow.lock.json"
+STAGES_MEMBER = "skills/stelow-workflow-orchestrator/stages.yaml"
+
+
+def set_root(path: Path) -> None:
+    """Relocate the tool: config/, agents/, stages/ and the cache follow the host.json location."""
+    global ROOT, CACHE, LOCK
+    ROOT = Path(path).resolve()
+    CACHE = ROOT / ".stelow-cache"
+    LOCK = ROOT / "stelow.lock.json"
+
+# Built-in Multica statuses and lifecycle categories. A custom status key may
+# not reuse one of these (server/internal/issuestatus).
+RESERVED = {
+    "backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled",
+    "unstarted", "started", "closed",
+}
+KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
+
+
+class Fail(Exception):
+    def __init__(self, message: str, code: int = 2):
+        super().__init__(message)
+        self.code = code
+
+
+# --------------------------------------------------------------------------- io
+
+
+def read_json(path: Path, what: str):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise Fail(f"{what} not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise Fail(f"{what} is not valid JSON ({path}): {exc}")
+
+
+def write_json(path: Path, payload) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def say(msg: str = "") -> None:
+    print(msg, flush=True)
+
+
+# ---------------------------------------------------------------------- config
+
+
+def load_host(path: Path) -> dict:
+    cfg = read_json(path, "config/host.json")
+    for section in ("stelow", "multica", "agents"):
+        if section not in cfg:
+            raise Fail(f"config/host.json is missing '{section}'")
+    return cfg
+
+
+def preflight(host: dict) -> None:
+    """Refuse to write with a half-filled config rather than half-provision a workspace."""
+    missing = [key for key in ("workspace_id", "runtime_id") if not str(host["multica"].get(key) or "").strip()]
+    if missing:
+        raise Fail("config/host.json: multica.%s must be set before apply" % ", multica.".join(missing))
+    if not str(host["stelow"].get("repo") or "").strip():
+        raise Fail("config/host.json: stelow.repo must be set")
+
+
+def load_groups(path: Path) -> list[dict]:
+    doc = read_json(path, "config/columns.json")
+    groups = doc.get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise Fail("config/columns.json has no 'groups'")
+    seen_stages: dict[str, str] = {}
+    seen_keys: dict[str, str] = {}
+    for g in groups:
+        gid = g.get("id", "")
+        if not KEY_RE.match(gid):
+            raise Fail(f"column id {gid!r} is not a valid Multica status key (^[a-z0-9][a-z0-9_]{{0,31}}$)")
+        if gid in RESERVED:
+            raise Fail(f"column id {gid!r} is a reserved Multica status key")
+        if gid in seen_keys:
+            raise Fail(f"column id {gid!r} is declared twice")
+        seen_keys[gid] = gid
+        label = g.get("label") or gid
+        slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+        if slug != gid:
+            raise Fail(
+                f"column {gid!r}: Multica derives the status key from the label, so "
+                f"label {label!r} slugifies to {slug!r}. Rename the label or the id so they agree."
+            )
+        stages = g.get("stages") or []
+        if not stages:
+            raise Fail(f"column {gid!r} lists no stages")
+        if g.get("gate"):
+            if g.get("agent"):
+                raise Fail(f"column {gid!r} is a gate and cannot also name an agent")
+        elif not g.get("agent"):
+            raise Fail(f"column {gid!r} is not a gate and must name an agent")
+        for stage in stages:
+            if stage in seen_stages:
+                raise Fail(f"stage {stage!r} is mapped by both {seen_stages[stage]!r} and {gid!r}")
+            seen_stages[stage] = gid
+    return groups
+
+
+# ------------------------------------------------------------- stelow stage model
+
+
+def parse_intents(text: str) -> dict[str, list[str]]:
+    """Parse `routes.intents` out of stages.yaml without a YAML dependency."""
+    intents: dict[str, list[str]] = {}
+    inside = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if re.match(r"^\s{2}intents:\s*$", line):
+            inside = True
+            continue
+        if not inside:
+            continue
+        entry = re.match(r"^\s{4}([A-Za-z0-9_-]+):\s*\[(.*?)\]\s*$", line)
+        if entry:
+            stages = [s.strip() for s in entry.group(2).split(",") if s.strip()]
+            if stages:
+                intents[entry.group(1)] = stages
+            continue
+        if re.match(r"^\s{0,3}\S", line):
+            inside = False
+    if not intents:
+        raise Fail("could not read routes.intents from stages.yaml — the file shape changed")
+    return intents
+
+
+def fetch_stages(repo: str, ref: str) -> str:
+    url = f"https://codeload.github.com/{repo}/tar.gz/{ref}"
+    try:
+        with urllib.request.urlopen(url, timeout=90) as resp:  # noqa: S310 (pinned https host)
+            blob = resp.read()
+    except OSError as exc:
+        raise Fail(f"could not download {repo}@{ref}: {exc}")
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
+            members = [m for m in archive.getmembers() if m.name.endswith(STAGES_MEMBER)]
+            if not members:
+                raise Fail(f"{STAGES_MEMBER} is not in {repo}@{ref}")
+            handle = archive.extractfile(members[0])
+            if handle is None:
+                raise Fail(f"{STAGES_MEMBER} is not a regular file in {repo}@{ref}")
+            return handle.read().decode("utf-8")
+    except (tarfile.TarError, OSError) as exc:
+        raise Fail(f"could not unpack {repo}@{ref}: {exc}")
+
+
+def ensure_stages(host: dict, force: bool = False) -> dict:
+    """Return {intents, sha, ref} from a pinned copy of stages.yaml."""
+    repo = host["stelow"]["repo"]
+    ref = host["stelow"]["ref"]
+    path = CACHE / "stages.yaml"
+    lock = read_json(LOCK, "stelow.lock.json") if LOCK.exists() else {}
+    if path.exists() and not force and lock.get("ref") == ref and lock.get("repo") == repo:
+        text = path.read_text(encoding="utf-8")
+        if hashlib.sha256(text.encode()).hexdigest() == lock.get("stages_sha256"):
+            return {"intents": parse_intents(text), "sha": lock["stages_sha256"], "ref": ref}
+    text = fetch_stages(repo, ref)
+    sha = hashlib.sha256(text.encode()).hexdigest()
+    CACHE.mkdir(exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    write_json(
+        LOCK,
+        {
+            "repo": repo,
+            "ref": ref,
+            "stages_sha256": sha,
+            "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    return {"intents": parse_intents(text), "sha": sha, "ref": ref}
+
+
+def stage_universe(groups: list[dict]) -> dict[str, str]:
+    return {stage: g["id"] for g in groups for stage in g["stages"]}
+
+
+def columns_for(intent: str, groups: list[dict], intents: dict[str, list[str]]) -> list[dict]:
+    """The columns a given intent actually traverses, in board order."""
+    if intent not in intents:
+        raise Fail(f"unknown intent {intent!r}; stages.yaml declares: {', '.join(sorted(intents))}")
+    route = intents[intent]
+    universe = stage_universe(groups)
+    missing = [s for s in route if s not in universe]
+    if missing:
+        raise Fail(
+            "stages.yaml declares stages no column maps: "
+            + ", ".join(missing)
+            + " — add them to config/columns.json"
+        )
+    wanted = {universe[s] for s in route}
+    return [g for g in groups if g["id"] in wanted]
+
+
+# ------------------------------------------------------------------- multica cli
+
+
+class Multica:
+    """Thin wrapper. Reads are always `--output json`."""
+
+    def __init__(self, host: dict):
+        self.bin = host["multica"].get("bin") or "multica"
+        self.workspace = host["multica"].get("workspace_id") or ""
+        self.calls: list[list[str]] = []
+
+    def argv(self, args: list[str]) -> list[str]:
+        cmd = [self.bin] + list(args)
+        if self.workspace:
+            cmd += ["--workspace-id", self.workspace]
+        return cmd
+
+    def run(self, args: list[str], can_fail: bool = False) -> tuple[int, str, str]:
+        cmd = self.argv(args)
+        self.calls.append(cmd)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            raise Fail(f"Multica CLI not found: {self.bin!r} (set multica.bin in config/host.json)")
+        if proc.returncode != 0 and not can_fail:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise Fail(f"FAILED: {' '.join(args)}\n{detail}", code=1)
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def json(self, args: list[str]):
+        _, out, _ = self.run(list(args) + ["--output", "json"])
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            raise Fail(f"expected JSON from `{' '.join(args)}`, got:\n{out[:400]}")
+
+    # --- live reads -------------------------------------------------------
+
+    @staticmethod
+    def _rows(payload, what: str) -> list[dict]:
+        if isinstance(payload, list):
+            return [r for r in payload if isinstance(r, dict)]
+        if isinstance(payload, dict):
+            for value in payload.values():
+                if isinstance(value, list) and all(isinstance(v, dict) for v in value):
+                    return value
+            if "id" in payload:
+                return [payload]
+        raise Fail(f"unexpected shape for {what}: {str(payload)[:200]}")
+
+    def skills(self) -> dict[str, str]:
+        return {r.get("name"): r.get("id") for r in self._rows(self.json(["skill", "list"]), "skill list") if r.get("name")}
+
+    def agents(self) -> dict[str, str]:
+        return {r.get("name"): r.get("id") for r in self._rows(self.json(["agent", "list"]), "agent list") if r.get("name")}
+
+    def agent_skill_ids(self, agent_id: str) -> list[str]:
+        payload = self.json(["agent", "skills", "list", agent_id])
+        rows = self._rows(payload, "agent skills list")
+        out = []
+        for row in rows:
+            ref = row.get("skill") if isinstance(row.get("skill"), dict) else row
+            if isinstance(ref, dict) and ref.get("id"):
+                out.append(ref["id"])
+        return out
+
+    def workflows(self) -> dict[str, str]:
+        return {r.get("name"): r.get("id") for r in self._rows(self.json(["workflow", "list"]), "workflow list") if r.get("name")}
+
+    def workflow(self, name: str) -> dict | None:
+        code, out, _ = self.run(["workflow", "get", name], can_fail=True)
+        if code != 0:
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            raise Fail(f"expected JSON from `workflow get {name}`, got:\n{out[:400]}")
+
+    def project_workflow(self, project_id: str):
+        code, out, _ = self.run(["project", "workflow", "get", project_id], can_fail=True)
+        if code != 0:
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            return None
+
+
+# Bound once, at import time, so a test double that replaces Multica cannot remove it.
+rows_of = Multica._rows
+
+
+# ------------------------------------------------------------------- the plan
+
+
+def agent_name(host: dict, agent: str) -> str:
+    prefix = host["agents"].get("name_prefix") or "stelow"
+    return f"{prefix}-{agent}"
+
+
+def workflow_name(host: dict, intent: str, gates: str) -> str:
+    prefix = host["defaults"].get("workflow_prefix") or "stelow"
+    name = f"{prefix}-{intent}"
+    return name if gates == "agent" else f"{name}-human"
+
+
+def section_map(path: Path) -> dict[str, str]:
+    """Split stages/columns.md into {column id: instruction text}."""
+    text = path.read_text(encoding="utf-8")
+    out: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines():
+        heading = re.match(r"^##\s+([a-z0-9_]+)\s*$", line)
+        if heading:
+            current = heading.group(1)
+            out[current] = []
+            continue
+        if line.startswith("# ") or line.startswith("## "):
+            current = None
+            continue
+        if current:
+            out[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in out.items()}
+
+
+def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], intent: str, gates: str, project: str) -> dict:
+    columns = columns_for(intent, groups, intents)
+    live_keys = {col["id"] for col in columns}
+    for index, col in enumerate(columns):
+        back = col.get("back_to") or ""
+        if back and back not in live_keys:
+            # A shorter intent chain can omit the column stelow reworks to.
+            # Clamp to the preceding column instead of emitting a dangling status.
+            col["back_to"] = columns[index - 1]["id"] if index else ""
+    instructions = section_map(ROOT / "stages" / "columns.md")
+    for col in columns:
+        if not instructions.get(col["id"]):
+            raise Fail(f"stages/columns.md has no ## {col['id']} section — every column needs instructions")
+
+    skills: list[str] = []
+    for col in columns:
+        for skill in col.get("skills") or []:
+            if skill not in skills:
+                skills.append(skill)
+    gate_agent = None
+    if gates == "agent" and any(col.get("gate") for col in columns):
+        gate_agent = "gatekeeper"
+        for skill in ("stelow-workflow-orchestrator",):
+            if skill not in skills:
+                skills.append(skill)
+
+    agents = []
+    for col in columns:
+        if col.get("gate"):
+            continue
+        if col["agent"] not in [a["agent"] for a in agents]:
+            agents.append({"agent": col["agent"], "skills": list(col.get("skills") or [])})
+    if gate_agent:
+        agents.append({"agent": gate_agent, "skills": ["stelow-workflow-orchestrator"]})
+
+    return {
+        "intent": intent,
+        "gates": gates,
+        "project": project,
+        "columns": [{"id": c["id"], "label": c.get("label", c["id"]), "category": c.get("category", "started"),
+                     "stages": c["stages"], "gate": bool(c.get("gate")), "agent": c.get("agent"),
+                     "back_to": c.get("back_to"), "instructions": instructions[c["id"]]} for c in columns],
+        "skills": skills,
+        "agents": agents,
+        "workflow": workflow_name(host, intent, gates),
+    }
+
+
+def build_steps(plan: dict, host: dict, agent_ids: dict[str, str], create: bool) -> list[dict]:
+    columns = plan["columns"]
+    steps: list[dict] = [{"status_key": "todo", "next_status_key": columns[0]["id"] if columns else "done"}]
+    for index, col in enumerate(columns):
+        nxt = columns[index + 1]["id"] if index + 1 < len(columns) else "done"
+        step: dict = {}
+        if create:
+            step["new_status"] = {"name": col["label"], "category": col["category"]}
+        else:
+            step["status_key"] = col["id"]
+        if col["gate"]:
+            if plan["gates"] == "human":
+                step["handler"] = {"type": "project_lead"}
+            else:
+                step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, "gatekeeper")]}
+        else:
+            step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, col["agent"])]}
+        step["instructions"] = col["instructions"]
+        step["next_status_key"] = nxt
+        if col.get("back_to"):
+            step["back_status_key"] = col["back_to"]
+        steps.append(step)
+    steps.append({"status_key": "done"})
+    return steps
+
+
+# ------------------------------------------------------------------- rendering
+
+
+def render_plan(plan: dict, host: dict, lock: dict, live_agents: dict[str, str], live_skills: dict[str, str], live_wf: dict[str, str]) -> str:
+    lines = [
+        f"stelow   repo={host['stelow']['repo']}  ref={lock.get('ref')}  stages.sha256={str(lock.get('sha'))[:12]}",
+        f"intent   {plan['intent']}   gates={plan['gates']}   project={plan['project'] or '(none)'}",
+        "",
+        f"skills   {len(plan['skills'])} required "
+        f"({sum(1 for s in plan['skills'] if s in live_skills)} already present)",
+    ]
+    for skill in plan["skills"]:
+        lines.append(f"  {'=' if skill in live_skills else '+'} {skill}")
+    lines.append("")
+    lines.append(f"agents   {len(plan['agents'])} ({sum(1 for a in plan['agents'] if agent_name(host, a['agent']) in live_agents)} already present)")
+    for agent in plan["agents"]:
+        name = agent_name(host, agent["agent"])
+        lines.append(f"  {'=' if name in live_agents else '+'} {name}  [{len(agent['skills'])} skills]")
+    lines.append("")
+    exists = plan["workflow"] in live_wf
+    lines.append(f"workflow {plan['workflow']}  ({'update' if exists else 'create'})")
+    chain = [("todo", None)] + [(col["id"], col) for col in plan["columns"]] + [("done", None)]
+    for index, (key, col) in enumerate(chain):
+        if col is None:
+            lines.append(f"  {key:<16} —")
+            continue
+        handler = "project_lead" if col["gate"] and plan["gates"] == "human" else (
+            agent_name(host, "gatekeeper") if col["gate"] else agent_name(host, col["agent"]))
+        gate = " · gate" if col["gate"] else ""
+        nxt = chain[index + 1][0] if index + 1 < len(chain) else ""
+        back = f"  back → {col['back_to']}" if col.get("back_to") else ""
+        stages = " ".join(col["stages"])
+        lines.append(f"  {key:<16} {handler:<22}{gate:<6} → {nxt:<16}{back}")
+        lines.append(f"  {'':<16} stages: {stages}")
+    if plan["project"]:
+        lines.append("")
+        lines.append(f"project  {plan['project']} → {plan['workflow']}")
+    return "\n".join(lines)
+
+
+# -------------------------------------------------------------------- commands
+
+
+def cmd_sync(host: dict, args) -> int:
+    lock = ensure_stages(host, force=True)
+    say(f"pinned {host['stelow']['repo']}@{lock['ref']}  stages.sha256={lock['sha'][:12]}")
+    for intent, stages in sorted(lock["intents"].items()):
+        say(f"  {intent:<14} {len(stages):>2} stages: {' '.join(stages)}")
+    return 0
+
+
+def cmd_plan(host: dict, args, groups, lock) -> int:
+    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    if args.json:
+        say(json.dumps(plan, indent=2))
+        return 0
+    multica = Multica(host)
+    try:
+        live_skills = multica.skills()
+        live_agents = multica.agents()
+        live_wf = multica.workflows()
+    except Fail as exc:
+        say(f"note: live state unavailable ({exc})")
+        live_skills, live_agents, live_wf = {}, {}, {}
+    say(render_plan(plan, host, lock, live_agents, live_skills, live_wf))
+    say("")
+    say("no writes performed. run `apply` to converge.")
+    return 0
+
+
+def ensure_skill(multica: Multica, host: dict, skill: str, refresh: bool) -> None:
+    repo = host["stelow"]["repo"]
+    ref = host["stelow"]["ref"]
+    root = host["stelow"].get("skill_root") or "skills"
+    live = multica.skills()
+    if skill in live:
+        if refresh:
+            code, _, err = multica.run(["skill", "refresh", live[skill]], can_fail=True)
+            if code != 0:
+                say(f"  ! refresh {skill}: {err.strip()[:160]} (kept existing)")
+        return
+    url = f"https://github.com/{repo}/tree/{ref}/{root}/{skill}"
+    multica.run(["skill", "import", "--url", url, "--on-conflict", "skip"])
+    live = multica.skills()
+    if skill not in live:
+        raise Fail(f"import of {skill} did not register it — check {url}")
+    say(f"  + skill {skill}")
+
+
+def ensure_agent(multica: Multica, host: dict, agent: str, skills: list[str], skill_ids: dict[str, str]) -> str:
+    name = agent_name(host, agent)
+    body = "\n\n".join([
+        (ROOT / "agents" / "_adapter.md").read_text(encoding="utf-8").strip(),
+        (ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8").strip(),
+    ])
+    description = f"{agent} column handler {host['agents'].get('description_suffix') or '(stelow)'}"
+    live = multica.agents()
+    if name in live:
+        agent_id = live[name]
+        common = ["--instructions", body, "--description", description]
+        model = host["multica"].get("model") or ""
+        if model:
+            common += ["--model", model]
+        multica.run(["agent", "update", agent_id] + common)
+    else:
+        create = ["agent", "create", "--name", name, "--instructions", body, "--description", description]
+        runtime = host["multica"].get("runtime_id") or ""
+        if not runtime:
+            raise Fail("multica.runtime_id is required to create agents (config/host.json)")
+        create += ["--runtime-id", runtime]
+        if host["multica"].get("model"):
+            create += ["--model", host["multica"]["model"]]
+        if host["multica"].get("thinking_level"):
+            create += ["--thinking-level", host["multica"]["thinking_level"]]
+        if host["agents"].get("permission"):
+            create += ["--permission-mode", host["agents"]["permission"]]
+        payload = multica.json(create)
+        rows = multica._rows(payload, "agent create")
+        agent_id = rows[0].get("id") if rows else None
+        if not agent_id:
+            raise Fail(f"agent create {name} returned no id")
+        say(f"  + agent {name}")
+    ids = [skill_ids[s] for s in skills if s in skill_ids]
+    multica.run(["agent", "skills", "set", agent_id, "--skill-ids", ",".join(ids)])
+    return agent_id
+
+
+def cmd_apply(host: dict, args, groups, lock) -> int:
+    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    preflight(host)
+    multica = Multica(host)
+    say(f"applying {plan['workflow']} (intent={plan['intent']}, gates={plan['gates']})")
+    for skill in plan["skills"]:
+        ensure_skill(multica, host, skill, args.refresh_skills)
+    skill_ids = multica.skills()
+    agent_ids: dict[str, str] = {}
+    for agent in plan["agents"]:
+        agent_ids[agent_name(host, agent["agent"])] = ensure_agent(
+            multica, host, agent["agent"], agent["skills"], skill_ids)
+    exists = plan["workflow"] in multica.workflows()
+    steps = build_steps(plan, host, agent_ids, create=not exists)
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+        json.dump(steps, handle, indent=2)
+        steps_path = handle.name
+    if exists:
+        multica.run(["workflow", "update", plan["workflow"], "--steps-file", steps_path])
+        say(f"  = workflow {plan['workflow']} (steps replaced)")
+    else:
+        multica.run([
+            "workflow", "create", "--name", plan["workflow"], "--steps-file", steps_path,
+            "--description", f"stelow {plan['intent']} chain ({plan['gates']} gates)",
+        ])
+        say(f"  + workflow {plan['workflow']}")
+    if plan["project"]:
+        cmd = ["project", "workflow", "set", plan["project"], plan["workflow"]]
+        if args.migrate:
+            for old, new in (host.get("migrate") or {}).items():
+                if old.startswith("_") or not new:
+                    continue
+                if new in {c["id"] for c in plan["columns"]} or new in {"todo", "done"}:
+                    cmd += ["--map", f"{old}={new}"]
+        multica.run(cmd)
+        say(f"  = project {plan['project']} → {plan['workflow']}")
+    say("done.")
+    return 0
+
+
+def cmd_verify(host: dict, args, groups, lock) -> int:
+    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    multica = Multica(host)
+    problems: list[str] = []
+    live_skills = multica.skills()
+    live_agents = multica.agents()
+    for skill in plan["skills"]:
+        if skill not in live_skills:
+            problems.append(f"skill missing: {skill}")
+    agent_ids: dict[str, str] = {}
+    for agent in plan["agents"]:
+        name = agent_name(host, agent["agent"])
+        if name not in live_agents:
+            problems.append(f"agent missing: {name}")
+            continue
+        agent_ids[name] = live_agents[name]
+        expected = {live_skills[s] for s in agent["skills"] if s in live_skills}
+        actual = set(multica.agent_skill_ids(live_agents[name]))
+        if expected - actual:
+            problems.append(f"{name}: missing skills {sorted(expected - actual)}")
+        if actual - expected:
+            problems.append(f"{name}: unexpected skills {sorted(actual - expected)}")
+    resolve = {agent_name(host, a["agent"]): agent_ids.get(agent_name(host, a["agent"]), f"<missing:{a['agent']}>") for a in plan["agents"]}
+    wf = multica.workflow(plan["workflow"])
+    if wf is None:
+        problems.append(f"workflow missing: {plan['workflow']}")
+    else:
+        raw_steps = wf.get("steps") if isinstance(wf, dict) else wf
+        live_steps = rows_of(raw_steps, "workflow get") if raw_steps else []
+        if not live_steps:
+            problems.append(f"workflow {plan['workflow']} exposes no steps")
+        expected_steps = build_steps(plan, host, resolve, create=False)
+        got = [s.get("status_key") for s in live_steps]
+        want = [s.get("status_key") for s in expected_steps]
+        if got != want:
+            problems.append(f"workflow steps differ: want {want} got {got}")
+        else:
+            for want_step, got_step in zip(expected_steps, live_steps):
+                want_next = want_step.get("next_status_key")
+                if want_next and got_step.get("next_status_key") != want_next:
+                    problems.append(f"{want_step['status_key']}: next is {got_step.get('next_status_key')!r}, want {want_next!r}")
+                want_back = want_step.get("back_status_key")
+                if want_back and got_step.get("back_status_key") != want_back:
+                    problems.append(f"{want_step['status_key']}: back is {got_step.get('back_status_key')!r}, want {want_back!r}")
+                live_handler = got_step.get("handler") if isinstance(got_step.get("handler"), dict) else {}
+                want_handler = want_step.get("handler") or {}
+                if want_handler.get("type") != live_handler.get("type") or (
+                    want_handler.get("id") and want_handler.get("id") != live_handler.get("id")
+                ):
+                    label = want_handler.get("type") or "none"
+                    problems.append(
+                        f"{want_step['status_key']}: handler is {live_handler.get('type')!r}, want {label!r}"
+                    )
+    if plan["project"]:
+        current = multica.project_workflow(plan["project"])
+        text = json.dumps(current or {})
+        if plan["workflow"] not in text:
+            problems.append(f"project {plan['project']} does not use {plan['workflow']}")
+    if problems:
+        say(f"DRIFT ({len(problems)})")
+        for problem in problems:
+            say(f"  ! {problem}")
+        say("run `apply` to converge.")
+        return 1
+    say(f"ok: {plan['workflow']} matches the plan ({len(plan['skills'])} skills, {len(plan['agents'])} agents)")
+    return 0
+
+
+def cmd_status(host: dict, args, groups, lock) -> int:
+    multica = Multica(host)
+    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    live_skills = multica.skills()
+    live_agents = multica.agents()
+    live_wf = multica.workflows()
+    say(f"stelow  ref={lock['ref']}  stages.sha256={str(lock['stages_sha256'])[:12]}")
+    say(f"skills  {sum(1 for s in plan['skills'] if s in live_skills)}/{len(plan['skills'])} of this intent present "
+        f"({len(live_skills)} in workspace)")
+    say(f"agents  {sum(1 for a in plan['agents'] if agent_name(host, a['agent']) in live_agents)}/{len(plan['agents'])} of this intent present "
+        f"({len(live_agents)} in workspace)")
+    say(f"workflow {'present' if plan['workflow'] in live_wf else 'MISSING'}: {plan['workflow']}")
+    say(f"columns  {' → '.join(['todo'] + [c['id'] for c in plan['columns']] + ['done'])}")
+    return 0
+
+
+# ------------------------------------------------------------------------ cli
+
+
+def main(argv: list[str]) -> int:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--intent", default=None,
+                        help="intent route from stages.yaml (default: config default)")
+    common.add_argument("--gates", choices=["human", "agent"], default=None,
+                        help="gate handler: the project lead (human) or the gatekeeper agent")
+    common.add_argument("--project", default=None, help="Multica project id")
+    common.add_argument("--json", action="store_true")
+    common.add_argument("--refresh-skills", action="store_true", help="re-pull imported skills from their source")
+    common.add_argument("--migrate", action="store_true", help="pass --map for built-in statuses when switching the project")
+
+    parser = argparse.ArgumentParser(prog="stelow-host", description="Provision stelow onto Multica.")
+    parser.add_argument("--config", default=str(ROOT / "config" / "host.json"))
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("sync", help="fetch and pin stages.yaml", parents=[common])
+    sub.add_parser("plan", help="show what would change", parents=[common])
+    sub.add_parser("apply", help="converge the workspace", parents=[common])
+    sub.add_parser("verify", help="assert the live workspace matches the plan", parents=[common])
+    sub.add_parser("status", help="compact live summary", parents=[common])
+    args = parser.parse_args(argv)
+
+    try:
+        config_path = Path(args.config)
+        set_root(config_path.parent.parent)
+        host = load_host(config_path)
+        host.setdefault("defaults", {})
+        args.intent = args.intent or host["defaults"].get("intent") or "feature"
+        args.gates = args.gates or host["defaults"].get("gates") or "human"
+        args.project = args.project or host["multica"].get("project_id") or ""
+        groups = load_groups(ROOT / "config" / "columns.json")
+        if args.command == "sync":
+            return cmd_sync(host, args)
+        lock = ensure_stages(host, force=False)
+        if args.command == "plan":
+            return cmd_plan(host, args, groups, lock)
+        if args.command == "apply":
+            return cmd_apply(host, args, groups, lock)
+        if args.command == "verify":
+            return cmd_verify(host, args, groups, lock)
+        if args.command == "status":
+            return cmd_status(host, args, groups, lock)
+        raise Fail(f"unknown command {args.command}")
+    except Fail as exc:
+        print(f"stelow-host: {exc}", file=sys.stderr)
+        return exc.code
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

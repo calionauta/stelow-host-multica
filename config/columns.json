@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "_comment": [
+    "The host's opinion: how stelow's 18 stages collapse into Multica board columns.",
+    "This file is the ONLY place a stage-to-column decision is written. The intent",
+    "stage lists are NOT copied here — they are read from the pinned stages.yaml",
+    "(`stelow-host sync`), so the methodology keeps a single source of truth.",
+    "",
+    "id      -> the Multica status key (must match ^[a-z0-9][a-z0-9_]{0,31}$ and",
+    "           must not collide with backlog|todo|in_progress|in_review|blocked|done|cancelled)",
+    "gate    -> true when the column ends a review gate; the handler is the project",
+    "           lead (--gates human) or the gatekeeper agent (--gates agent)",
+    "back_to -> the column a rejected step returns to, mirroring stelow's reject/rework edge",
+    "skills  -> the stelow skills the handler's agent receives (nothing else)"
+  ],
+  "groups": [
+    {
+      "id": "intake",
+      "label": "Intake",
+      "category": "unstarted",
+      "stages": ["triage", "select"],
+      "agent": "intake",
+      "skills": ["stelow-workflow-orchestrator", "stelow-product-opportunity-mapping"]
+    },
+    {
+      "id": "framing",
+      "label": "Framing",
+      "category": "started",
+      "stages": ["setup", "context", "shape", "critique"],
+      "agent": "framing",
+      "back_to": "intake",
+      "skills": [
+        "stelow-workflow-shape-up",
+        "stelow-workflow-codebase-critique",
+        "stelow-workflow-plan-critique"
+      ]
+    },
+    {
+      "id": "product_gate",
+      "label": "Product gate",
+      "category": "started",
+      "stages": ["gate"],
+      "gate": true,
+      "back_to": "framing"
+    },
+    {
+      "id": "design",
+      "label": "Design",
+      "category": "started",
+      "stages": ["scope", "interface"],
+      "agent": "design",
+      "back_to": "product_gate",
+      "skills": [
+        "stelow-product-scope-mapping",
+        "stelow-workflow-interface-alternatives",
+        "stelow-workflow-interface-contrast"
+      ]
+    },
+    {
+      "id": "interface_gate",
+      "label": "Interface gate",
+      "category": "started",
+      "stages": ["int-gate", "selection"],
+      "gate": true,
+      "back_to": "design"
+    },
+    {
+      "id": "tech",
+      "label": "Tech",
+      "category": "started",
+      "stages": ["architecture", "planning"],
+      "agent": "tech",
+      "back_to": "design",
+      "skills": [
+        "stelow-workflow-architecture-alternatives",
+        "stelow-workflow-architecture-contrast",
+        "stelow-workflow-tech-planning"
+      ]
+    },
+    {
+      "id": "tech_gate",
+      "label": "Tech gate",
+      "category": "started",
+      "stages": ["plan-gate"],
+      "gate": true,
+      "back_to": "tech"
+    },
+    {
+      "id": "build",
+      "label": "Build",
+      "category": "started",
+      "stages": ["execution"],
+      "agent": "build",
+      "back_to": "framing",
+      "skills": [
+        "stelow-workflow-scope-executor",
+        "stelow-workflow-coding-standards",
+        "stelow-workflow-testing-ai-code"
+      ]
+    },
+    {
+      "id": "verify",
+      "label": "Verify",
+      "category": "started",
+      "stages": ["verification"],
+      "agent": "verify",
+      "back_to": "build",
+      "skills": [
+        "stelow-workflow-testing-execution",
+        "stelow-workflow-execution-critique",
+        "stelow-workflow-ux-critique"
+      ]
+    },
+    {
+      "id": "diff_gate",
+      "label": "Diff gate",
+      "category": "started",
+      "stages": ["diff-gate"],
+      "gate": true,
+      "back_to": "verify"
+    },
+    {
+      "id": "audit",
+      "label": "Audit",
+      "category": "started",
+      "stages": ["audit"],
+      "agent": "audit",
+      "back_to": "verify",
+      "skills": ["stelow-workflow-orchestrator"]
+    }
+  ]
+}
