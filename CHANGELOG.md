@@ -4,6 +4,44 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.12] - 2026-11-15
+
+Everything here came out of reading the first real card's timeline end to end and
+asking, for each stop, whether a mechanism prevents it or whether it needed a
+person to notice. Two of the six stops needed a person.
+
+### Added
+
+- **`doctor --fix` restarts a stage that stopped.** An agent column with no run is
+a stage whose run ended without moving the card; it gets a wakeup with
+`policy.stall_minutes` (5) and an instruction to finish one of two ways rather
+than start over. On the smoke card that was 27 minutes in `design` and 45 in
+`verify`, both ended by a human mention.
+
+- **A card in `todo` is an orphan, not invisible.** `todo` is the entry status
+every workflow starts from and it has no handler, so a card left there does
+nothing while looking alive. It is not a group in `columns.json`, which is why
+the first version of the check could not see the eight minutes the smoke card
+spent there.
+
+- **`ask build "<title>"`** opens a card on the eighteen-status chain, in the
+first column rather than in `todo`.
+
+### Fixed
+
+- **`install --check` failed on three correct projects.** `project workflow get`
+returns the whole workflow object, not `{"workflow": name}`; `workflow_name_of`
+now reads both shapes, and a name collision with the chain's own `workflow_name`
+is why it is spelled that way.
+
+- **`install` could not create the chain's project**, only a board's. Creation is
+one path now, gated on `create_project`/`_board` so a mistyped `--project` still
+fails loudly instead of creating something.
+
+- The timer runs every five minutes, not fifteen. It starts no agent, so the
+interval is free, and five minutes is the difference between a stage that looks
+stopped and one that is.
+
 ## [0.1.11] - 2026-11-15
 
 ### Added

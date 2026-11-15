@@ -129,14 +129,39 @@ forward move with extra steps. `doctor` reports it by name.
    has the agent CLI signed in.
 3. Export the ids instead of committing them: `MULTICA_WORKSPACE_ID`,
    `MULTICA_RUNTIME_ID`, `MULTICA_PROJECT_ID`.
-4. `multica project create --title stelow --description "..."` — the flag is
-   `--title`, not `--name`.
-5. `sync`, `doctor`, `plan`, `apply`, `verify`.
+4. `./bin/stelow-host install` — it creates the three projects (**Build**,
+   **Explore**, **Research**) with `--title`, sets each workflow, and is idempotent.
+   `install --check` afterwards must print three `OK` lines.
+5. `sync`, `doctor`, `plan`, `install`, `verify`.
 
 A healthy first apply prints one `+ skill` line per skill, one `+ agent` per
 agent, one `+ workflow`, and `= project <id> → <workflow>`. A second apply
 prints only `=` lines. `verify` must exit 0, and `doctor` must end with
 `all checks passed`.
+
+## Every stall the first real card hit, and what stops it now
+
+The first card through the chain (eighteen statuses, two back-edges, three audit
+passes) took five hours and stopped six times. Each stop is a defect in this host
+if it needed a person to restart it, so each one now has a mechanism:
+
+| when | what happened | what prevents it now |
+|---|---|---|
+| 13:47 | framing refused the card: the request could not produce its artifacts | `intake` asks for the decision, the known facts and the deadline before it forwards; a send-back is the loop working |
+| 13:48 | the card sat in `todo`, the entry status, for 8 minutes | `todo` is in the check's known set, so a card there is an orphan; `ask build` opens on the first column, never in `todo` |
+| 14:38 | `design` sat 27 minutes with no run | `doctor --fix` restarts an agent column with no run (wakeup, `policy.stall_minutes`) |
+| 15:20 | `verify` sat 45 minutes with no run | same restart, on the same timer |
+| 17:12 | `build` finished and parked with one ruling needed, unmarked | a parked run marks `needs-human` and arms one 45-minute nudge |
+| 18:19 | audit sent the card back: two requirements short | the back edge, with a budget of two, then a person |
+
+The two stalls that needed a human mention to restart are the ones that matter:
+the workflow hands the card forward correctly and the next stage simply does not
+begin. Nothing inside a run can notice that, because the run is over. Only a
+reader of the board can, and the reader is the timer.
+
+Run it every five minutes, not every fifteen: it starts no agent, so a shorter
+interval costs nothing, and five minutes is the difference between a stage that
+looks stopped and one that is.
 
 ## Smoke test after provisioning
 

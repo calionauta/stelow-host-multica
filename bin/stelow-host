@@ -1042,6 +1042,12 @@ def back_edge_findings(events, groups, limit):
 
 
 HUMAN_GATE_MARKER = "needs-human"
+STALL_NUDGE = (
+    "The previous run ended without moving this card. Read the card, do the stage, then finish one of two "
+    "ways: move it forward with its artifact, or mark it needs-human and say in one line who owes what. "
+    "Do not start over, and do not repeat work the artefacts already record."
+)
+
 WAITING_NUDGE = (
     "This card is parked for a human ruling. Check for an answer; if there is "
     "none, say in one line who owes what and re-arm instead of waiting silently."
@@ -1183,7 +1189,11 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
         if issues is not None:
             running, labels, spent = set(), {}, {}
             limit = int(load_policy().get("max_back_edges", 2))
-            known = {str(group["id"]) for group in groups}
+            # `todo` is the entry status every workflow starts from and it has no
+            # handler, so a card left there does nothing at all. It is not a group
+            # in columns.json, which is why the first version of this check could
+            # not see the card that sat in it for eight minutes.
+            known = {str(group["id"]) for group in groups} | {"todo", "done", "cancelled"}
             for issue in issues:
                 issue_id = str(issue.get("id") or "")
                 if not issue_id:
@@ -1226,9 +1236,11 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             stale_idle = [key for key, _status, _hours in stalled]
             park = unmarked + [key for key in spent if key not in unmarked]
             park += [key for key in stale_idle if key not in park]
-            if getattr(args, "fix", False) and park:
+            if getattr(args, "fix", False):
                 by_key = {issue.get("key"): issue for issue in issues}
-                marked = 0
+                gates_now = gate_ids(groups)
+                restart_after = f"{int(float(load_policy().get('stall_minutes', 5)))}m"
+                marked = restarted = 0
                 for key in park:
                     issue_id = str((by_key.get(key) or {}).get("id") or "")
                     if not issue_id:
@@ -1237,7 +1249,27 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     live.run(["issue", "wakeup", "create", issue_id, "--after", "45m",
                               "--instruction", WAITING_NUDGE], can_fail=True)
                     marked += 1
-                say(f"fix: marked {marked} card(s) with {HUMAN_GATE_MARKER} and a 45m nudge")
+                for key in orphans:
+                    issue = by_key.get(key) or {}
+                    issue_id = str(issue.get("id") or "")
+                    if not issue_id:
+                        continue
+                    if str(issue.get("status") or "") in gates_now | {"todo"}:
+                        # Nothing in a gate or in the entry column can start by
+                        # itself, so the only honest action is to tell a person.
+                        live.run(["issue", "label", "add", issue_id, HUMAN_GATE_MARKER], can_fail=True)
+                        live.run(["issue", "wakeup", "create", issue_id, "--after", "45m",
+                                  "--instruction", WAITING_NUDGE], can_fail=True)
+                        marked += 1
+                    else:
+                        # An agent column with no run is a stage that stopped. Two
+                        # real stalls on the smoke card (27 minutes in design, 45
+                        # in verify) were only restarted because a person noticed.
+                        live.run(["issue", "wakeup", "create", issue_id, "--after", restart_after,
+                                  "--instruction", STALL_NUDGE], can_fail=True)
+                        restarted += 1
+                if marked or restarted:
+                    say(f"fix: {marked} card(s) marked and nudged, {restarted} stage(s) restarted")
     if offline:
         check("offline", True, "network and live-workspace checks skipped")
 
@@ -1338,14 +1370,30 @@ def load_projects() -> list[dict]:
     return json.loads(path.read_text()).get("projects") or []
 
 
+def workflow_name_of(payload) -> str:
+    """The workflow's name out of either shape the CLI returns.
+
+    `project workflow get` answers with the whole workflow object; `project
+    workflow set` answers with `{"workflow": "<name>"}`. Reading only one shape
+    makes every check fail on the correct case, which is how this shipped once.
+    """
+    if isinstance(payload, str):
+        return payload.strip()
+    if not isinstance(payload, dict):
+        return ""
+    inner = payload.get("workflow")
+    if isinstance(inner, dict):
+        return str(inner.get("name") or "")
+    if isinstance(inner, str) and inner:
+        return inner
+    return str(payload.get("name") or payload.get("workflow_name") or "")
+
+
 def project_workflow(multica: Multica, project_id: str) -> str:
     try:
-        payload = multica.json(["project", "workflow", "get", project_id])
+        return workflow_name_of(multica.json(["project", "workflow", "get", project_id]))
     except Fail:
         return ""
-    if isinstance(payload, dict):
-        return str(payload.get("workflow") or payload.get("workflow_name") or "")
-    return ""
 
 
 def scope_args(args, entry: dict):
@@ -1355,6 +1403,7 @@ def scope_args(args, entry: dict):
     scoped.project = entry["project"]
     scoped.intent = entry.get("intent", "feature")
     scoped.gates = entry.get("gates", "human")
+    scoped.create_project = True
     return scoped
 
 
@@ -1409,8 +1458,44 @@ House rules: one skill, one artefact, one page. Cite what you use, or say you do
 """
 
 
+def ask_chain(host: dict, args, groups) -> int:
+    multica = Multica(host)
+    project_id = resolve_project(multica, "Build")
+    if not project_id:
+        raise Fail("project Build does not exist; run install first")
+    first = groups[0]["id"] if groups else "intake"
+    question = " ".join(args.question).strip()
+    body_path = ROOT / ".stelow-cache" / "ask.md"
+    body_path.parent.mkdir(parents=True, exist_ok=True)
+    body_path.write_text(f"**What is wanted:** {question}\n\n{args.when or ''}".rstrip() + "\n")
+    title = args.title or question[:70]
+    if args.dry_run:
+        say(f"would create {title!r} on Build/{first}")
+        return 0
+    created = multica.json([
+        "issue", "create", "--project", project_id, "--title", title,
+        "--description-file", str(body_path),
+    ])
+    issue_id = str(created.get("id") or "")
+    if not issue_id:
+        raise Fail("the issue was created but its id could not be read")
+    multica.run(["issue", "status", issue_id, first])
+    say(f"{created.get('key') or issue_id}  → Build/{first}")
+    return 0
+
+
+CHAIN_NAMES = ("build", "chain")
+
+
 def cmd_ask(host: dict, args, groups) -> int:
-    """Put one question on a board, with the strategy already named."""
+    """Put one question on a board, with the strategy already named.
+
+    `build` opens a card on the eighteen-status chain instead: it lands in the
+    first column, not in `todo`, because a card in `todo` has no handler and does
+    nothing while looking alive.
+    """
+    if args.board in CHAIN_NAMES:
+        return ask_chain(host, args, groups)
     board = load_board(args.board)
     skill = args.skill or ""
     if skill:
@@ -1486,10 +1571,11 @@ def cmd_apply(host: dict, args, groups, lock) -> int:
         say(f"  + workflow {plan['workflow']}")
     if plan["project"]:
         project_ref = resolve_project(multica, plan["project"])
-        if not project_ref and plan.get("_board"):
+        may_create = plan.get("_board") or getattr(args, "create_project", False)
+        if not project_ref and may_create:
             multica.run([
                 "project", "create", "--title", plan["project"],
-                "--description", f"stelow {plan['intent']} board: one card, one skill, one artifact",
+                "--description", f"stelow {plan['intent']}: declared in stelow-host-multica",
             ])
             say(f"  + project {plan['project']}")
             project_ref = resolve_project(multica, plan["project"])

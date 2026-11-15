@@ -181,6 +181,16 @@ class FakeMultica:
                 normalized.append(entry)
             self.state["workflows"][name] = normalized
             return 0, json.dumps({"name": name, "steps": normalized}), ""
+        if args[:3] == ["issue", "label", "add"]:
+            self.state.setdefault("labels", {}).setdefault(args[3], set()).add(args[4])
+            return 0, json.dumps({"ok": True}), ""
+        if args[:3] == ["issue", "wakeup", "create"]:
+            self.state.setdefault("wakeups", []).append({
+                "issue": args[3],
+                "after": args[args.index("--after") + 1],
+                "instruction": args[args.index("--instruction") + 1],
+            })
+            return 0, json.dumps({"ok": True}), ""
         if args[:2] == ["issue", "create"]:
             issue_id = self._next("issue")
             title = args[args.index("--title") + 1]
@@ -964,6 +974,21 @@ class TestStalledCards(unittest.TestCase):
         self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now), [])
 
 
+class TestWorkflowName(unittest.TestCase):
+    def test_the_whole_workflow_object_reads_as_a_name(self):
+        # Catches: the shape `project workflow get` actually returns, which made
+        # install --check report FAIL on three correct projects.
+        self.assertEqual(HOST.workflow_name_of({"name": "stelow-explore", "steps": []}), "stelow-explore")
+
+    def test_the_set_shape_reads_as_a_name(self):
+        # Catches: the other shape, from `project workflow set`.
+        self.assertEqual(HOST.workflow_name_of({"workflow": "stelow-feature-human"}), "stelow-feature-human")
+
+    def test_an_unknown_shape_is_empty_not_a_crash(self):
+        self.assertEqual(HOST.workflow_name_of(None), "")
+        self.assertEqual(HOST.workflow_name_of([1, 2]), "")
+
+
 class TestInstall(HostCase):
     def test_projects_json_declares_the_three_boards(self):
         # Catches: a board that ships as a file nobody installs, so the README
@@ -993,6 +1018,22 @@ class TestInstall(HostCase):
         for key, value in kwargs.items():
             setattr(scope, key, value)
         return scope
+
+
+class TestTheEntryColumn(HostCase):
+    def test_a_card_in_the_entry_column_is_an_orphan(self):
+        # Catches: the eight minutes the smoke card spent in `todo` where nothing
+        # runs and no check could see it, because `todo` is not a group in
+        # columns.json and the check only knew the groups.
+        issues = [{"id": "i1", "key": "CAL-9", "status": "todo"}]
+        unmarked, orphans, stale = HOST.board_findings(issues, set(), {"todo", "intake"}, set(), {})
+        self.assertEqual(orphans, ["CAL-9"])
+        self.assertEqual((unmarked, stale), ([], []))
+
+    def test_the_policy_states_how_long_a_stage_may_sit(self):
+        # Catches: the restart delay living only in a prompt.
+        policy = json.loads((REPO / "config" / "columns.json").read_text())["policy"]
+        self.assertEqual(policy["stall_minutes"], 5)
 
 
 class TestAsk(HostCase):
@@ -1026,6 +1067,12 @@ class TestAsk(HostCase):
         # Catches: `ask research` writing into the build chain's project.
         self.ask()
         self.assertEqual(list(self.fake.state["issues"].values())[0]["project"], "proj-research")
+
+    def test_build_opens_on_the_chain_not_in_the_entry_column(self):
+        # Catches: `ask build` leaving the card in `todo`, where nothing runs.
+        self.fake.state["project_titles"]["proj-build"] = "Build"
+        self.ask(board="build")
+        self.assertEqual(list(self.fake.state["issues"].values())[0]["status"], "intake")
 
     def test_dry_run_writes_nothing(self):
         # Catches: a --dry-run that creates the card anyway.
