@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "Three agents, not one per column. Stages that share an author share an agent; only the gates get a separate one, because a gate is cross-checking and a reviewer must not share the instincts of whoever produced the work. Every group names its agent; gate groups name the reviewer, used only when gates run as an agent (--gates agent) instead of the project lead.",
+  "_comment": "Board columns. `stages` are stelow stage ids read from the pinned stages.yaml; `skills` lists only supporting skills \u2014 the skill that OWNS each stage comes from the pinned stage-catalog.json, never from this file. `agent` is one of plan/build/review for every column, gates included (used only with --gates agent).",
   "groups": [
     {
       "id": "intake",
@@ -11,9 +11,7 @@
         "select"
       ],
       "agent": "plan",
-      "skills": [
-        "stelow-workflow-orchestrator"
-      ],
+      "skills": [],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
     {
@@ -29,11 +27,8 @@
       "agent": "plan",
       "back_to": "intake",
       "skills": [
-        "stelow-workflow-orchestrator",
         "stelow-product-opportunity-mapping",
-        "stelow-workflow-shape-up",
-        "stelow-product-codebase-critique",
-        "stelow-workflow-plan-critique"
+        "stelow-workflow-codebase-critique"
       ],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
@@ -47,9 +42,7 @@
       "gate": true,
       "back_to": "framing",
       "agent": "review",
-      "skills": [
-        "stelow-workflow-orchestrator"
-      ],
+      "skills": [],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
     {
@@ -63,9 +56,7 @@
       "agent": "plan",
       "back_to": "product_gate",
       "skills": [
-        "stelow-product-scope-mapping",
-        "stelow-product-interface-alternatives",
-        "stelow-workflow-interface-contrast"
+        "stelow-workflow-interface-alternatives"
       ],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
@@ -80,9 +71,7 @@
       "gate": true,
       "back_to": "design",
       "agent": "review",
-      "skills": [
-        "stelow-workflow-orchestrator"
-      ],
+      "skills": [],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
     {
@@ -96,10 +85,8 @@
       "agent": "plan",
       "back_to": "design",
       "skills": [
-        "stelow-workflow-orchestrator",
-        "stelow-product-architecture-alternatives",
-        "stelow-product-architecture-contrast",
-        "stelow-workflow-tech-planning"
+        "stelow-workflow-architecture-alternatives",
+        "stelow-workflow-architecture-contrast"
       ],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
@@ -113,9 +100,7 @@
       "gate": true,
       "back_to": "tech",
       "agent": "review",
-      "skills": [
-        "stelow-workflow-orchestrator"
-      ],
+      "skills": [],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
     {
@@ -128,9 +113,8 @@
       "agent": "build",
       "back_to": "framing",
       "skills": [
-        "stelow-workflow-scope-executor",
-        "stelow-product-coding-standards",
-        "stelow-product-testing-ai-code"
+        "stelow-workflow-coding-standards",
+        "stelow-workflow-testing-ai-code"
       ],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
@@ -143,9 +127,7 @@
       ],
       "agent": "build",
       "back_to": "build",
-      "skills": [
-        "stelow-workflow-testing-execution"
-      ],
+      "skills": [],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
     {
@@ -158,9 +140,7 @@
       "gate": true,
       "back_to": "build",
       "agent": "review",
-      "skills": [
-        "stelow-workflow-orchestrator"
-      ],
+      "skills": [],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     },
     {
@@ -173,10 +153,9 @@
       "agent": "review",
       "back_to": "build",
       "skills": [
-        "stelow-workflow-execution-critique",
         "stelow-workflow-plan-critique",
-        "stelow-product-codebase-critique",
-        "stelow-product-ux-critique"
+        "stelow-workflow-codebase-critique",
+        "stelow-workflow-ux-critique"
       ],
       "_agent_note": "one of three: plan (triage\u2192planning), build (execution+verification), review (gates+audit)"
     }

@@ -97,6 +97,7 @@ class FakeMultica:
     """Records the calls the tool would make, against dict state."""
 
     _rows = staticmethod(HOST.Multica._rows)
+    _one = staticmethod(HOST.Multica._one)
     last = None
 
     def __init__(self, host):
@@ -115,6 +116,12 @@ class FakeMultica:
     def run(self, args, can_fail=False):
         self.calls.append(list(args))
         args = list(args)
+        if args[:2] == ["runtime", "list"]:
+            return 0, json.dumps([{
+                "id": self.state.get("runtime_id", "rt-test"),
+                "name": "test-runtime",
+                "status": self.state.get("runtime_status", "online"),
+            }]), ""
         if args[:2] == ["skill", "list"]:
             return 0, json.dumps([{"id": v, "name": k} for k, v in self.state["skills"].items()]), ""
         if args[:2] == ["skill", "import"]:
@@ -185,6 +192,9 @@ class FakeMultica:
             raise HOST.Fail("fake: %s" % err, code=1)
         return json.loads(out)
 
+    def runtimes(self):
+        return self._rows(self.json(["runtime", "list"]), "runtime list")
+
     def skills(self):
         return dict(self.state["skills"])
 
@@ -248,6 +258,10 @@ class HostCase(unittest.TestCase):
             "catalog_sha256": hashlib.sha256(cat_text.encode()).hexdigest(),
             "transitions_sha256": hashlib.sha256(tr_text.encode()).hexdigest(),
             "owners": {s["id"]: s["skill"] for s in catalog["stages"] if s.get("skill")},
+            "rejects": {s: [target] for s, target in (
+                ("gate", "shape"), ("int-gate", "interface"), ("plan-gate", "planning"),
+                ("diff-gate", "execution"), ("audit", "execution"),
+            )},
         }), encoding="utf-8")
 
     def host_repo(self):
@@ -450,24 +464,24 @@ class TestRedProof(HostCase):
                 "agent list",
             )
 
-    def test_a_stage_whose_owner_agent_does_not_load_it_is_reported(self):
-        """The drift that matters: stages.yaml repoints a stage at a new skill and
-        the host keeps dispatching it to an agent that has never read it."""
+    def test_a_stage_with_no_catalog_owner_is_reported(self):
+        """Column skills are derived from the catalog, so a stage the catalog
+        forgets runs on column prose alone — the instructions nobody wrote."""
         plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], "feature", "human", "")
         owners = dict(self.lock["owners"])
         self.assertEqual(HOST.owner_gaps(plan, owners), [])
-        owners["shape"] = "stelow-brand-new-skill"
+        del owners["shape"]
         gaps = HOST.owner_gaps(plan, owners)
         self.assertEqual(len(gaps), 1, gaps)
         self.assertIn("shape", gaps[0])
 
-    def test_a_gate_stage_owner_must_be_on_the_reviewer(self):
+    def test_agent_run_gates_load_the_gate_skill(self):
+        """With --gates agent the gate step is handed to an agent: it must have
+        read the gate's own instructions, which the catalog names."""
         plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], "feature", "agent", "")
-        owners = dict(self.lock["owners"])
-        owners["plan-gate"] = "stelow-gatekeeping-skill"
-        gaps = HOST.owner_gaps(plan, owners)
-        self.assertEqual(len(gaps), 1, gaps)
-        self.assertIn("review", gaps[0])
+        review = next(a for a in plan["agents"] if a["agent"] == "review")
+        for stage in ("gate", "int-gate", "plan-gate", "diff-gate"):
+            self.assertIn(self.lock["owners"][stage], review["skills"], stage)
 
 
 class TestFlowBackEdges(HostCase):
@@ -514,9 +528,70 @@ class TestFlowBackEdges(HostCase):
         for group in groups:
             if group.get("agent") == "stelow-plan":
                 wanted |= set(group["skills"])
+                wanted |= {self.lock["owners"][s] for s in group["stages"] if s in self.lock["owners"]}
         self.assertEqual(set(shared[0]["skills"]), wanted)
 
+    def test_the_lock_carries_the_owners_and_the_rejects(self):
+        """plan derives skills from owners and doctor checks back-edges against
+        rejects, both read from this file. Leaving them out makes both checks
+        pass while checking nothing — which is exactly what shipped once."""
+        lock = HOST.read_json(HOST.LOCK, "stelow.lock.json")
+        self.assertEqual(lock["owners"]["shape"], "stelow-workflow-shape-up")
+        self.assertEqual(lock["rejects"]["diff-gate"], ["execution"])
+
+    def test_a_create_payload_with_several_lists_yields_its_object(self):
+        """agent create returns skills, env and labels as their own lists; taking
+        "the first list of dicts" picked none of them and failed the run after
+        every skill had already been imported."""
+        payload = {"id": "agent-1", "name": "stelow-plan", "skills": [{"id": "s1"}], "env": [{"k": "v"}]}
+        self.assertEqual(REAL_MULTICA._one(payload, "agent create")["id"], "agent-1")
+        with self.assertRaises(HOST.Fail):
+            REAL_MULTICA._one({"skills": [], "env": []}, "agent create")
+
 class TestVerify(HostCase):
+    def test_a_stale_runtime_id_is_reported(self):
+        """apply succeeds and every card sits there when the id belongs to a
+        machine that is not this one; doctor must say so."""
+        ok, detail = HOST.runtime_check(self.host, self.fake)
+        self.assertTrue(ok, detail)
+        self.fake.state["runtime_status"] = "offline"
+        ok, detail = HOST.runtime_check(self.host, self.fake)
+        self.assertFalse(ok)
+        self.assertIn("offline", detail)
+        self.host["multica"]["runtime_id"] = "not-this-daemon"
+        ok, detail = HOST.runtime_check(self.host, self.fake)
+        self.assertFalse(ok)
+        self.assertIn("missing", detail)
+
+    def test_a_bookend_step_with_no_handler_is_not_drift(self):
+        """The API spells "nothing happens" as {"type":"none"} and our bookends
+        omit the field; comparing raw values reported drift on todo and done."""
+        self.apply()
+        wf = self.fake.state["workflows"]["stelow-feature-human"]
+        for step in wf:
+            step.setdefault("handler", {"type": "none"})
+        self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 0)
+
+    def test_status_prints_a_pinned_digest(self):
+        """status crashed on a KeyError after the lock gained its own sha keys."""
+        self.apply()
+        self.assertEqual(HOST.cmd_status(self.host, self.args(), self.groups, self.lock), 0)
+
+    def test_a_builtin_terminal_column_is_not_drift(self):
+        """Multica appends its own `cancelled` column to every workflow. An exact
+        list compare made verify fail forever on a converged workspace — the
+        check that is supposed to be runnable stopped being runnable."""
+        self.apply()
+        self.fake.state["workflows"]["stelow-feature-human"].append({"status_key": "cancelled"})
+        self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 0)
+
+    def test_an_unexpected_custom_column_is_drift(self):
+        """The other half: a column we never asked for means someone edited the
+        board by hand, and verify must say so."""
+        self.apply()
+        self.fake.state["workflows"]["stelow-feature-human"].append({"status_key": "staging"})
+        self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 1)
+
     def test_verify_passes_right_after_apply(self):
         """A verify that fails on a fresh apply is a verify nobody will keep running."""
         self.apply()

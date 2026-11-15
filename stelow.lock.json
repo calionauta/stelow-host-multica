@@ -1,7 +1,193 @@
 {
   "catalog_sha256": "566eb71cd5fdc5737e8b5b7e246663bc558ad07dd5778a3ef67ea0e88a13d4d8",
-  "fetched_at": "2026-11-15T12:50:31Z",
+  "fetched_at": "2026-11-15T13:35:45Z",
+  "owners": {
+    "architecture": "stelow-workflow-orchestrator",
+    "audit": "stelow-workflow-execution-critique",
+    "context": "stelow-workflow-orchestrator",
+    "critique": "stelow-workflow-plan-critique",
+    "diff-gate": "stelow-workflow-orchestrator",
+    "execution": "stelow-workflow-scope-executor",
+    "gate": "stelow-workflow-orchestrator",
+    "int-gate": "stelow-workflow-orchestrator",
+    "interface": "stelow-workflow-interface-contrast",
+    "plan-gate": "stelow-workflow-orchestrator",
+    "planning": "stelow-workflow-tech-planning",
+    "scope": "stelow-product-scope-mapping",
+    "select": "stelow-workflow-orchestrator",
+    "selection": "stelow-workflow-orchestrator",
+    "setup": "stelow-workflow-orchestrator",
+    "shape": "stelow-workflow-shape-up",
+    "triage": "stelow-workflow-orchestrator",
+    "verification": "stelow-workflow-testing-execution"
+  },
   "ref": "main",
+  "rejects": {
+    "architecture": {
+      "next": [
+        "planning"
+      ],
+      "reject": [
+        "scope"
+      ],
+      "rework": []
+    },
+    "audit": {
+      "next": [],
+      "reject": [
+        "execution"
+      ],
+      "rework": []
+    },
+    "context": {
+      "next": [
+        "shape",
+        "planning",
+        "audit"
+      ],
+      "reject": [
+        "setup"
+      ],
+      "rework": []
+    },
+    "critique": {
+      "next": [
+        "gate"
+      ],
+      "reject": [
+        "shape"
+      ],
+      "rework": []
+    },
+    "diff-gate": {
+      "next": [
+        "audit"
+      ],
+      "reject": [
+        "execution"
+      ],
+      "rework": []
+    },
+    "execution": {
+      "next": [
+        "verification"
+      ],
+      "reject": [],
+      "rework": [
+        "shape"
+      ]
+    },
+    "gate": {
+      "next": [
+        "scope",
+        "execution"
+      ],
+      "reject": [
+        "shape"
+      ],
+      "rework": []
+    },
+    "int-gate": {
+      "next": [
+        "selection"
+      ],
+      "reject": [
+        "interface"
+      ],
+      "rework": []
+    },
+    "interface": {
+      "next": [
+        "int-gate"
+      ],
+      "reject": [
+        "scope"
+      ],
+      "rework": []
+    },
+    "plan-gate": {
+      "next": [
+        "execution"
+      ],
+      "reject": [
+        "planning"
+      ],
+      "rework": []
+    },
+    "planning": {
+      "next": [
+        "plan-gate"
+      ],
+      "reject": [
+        "architecture"
+      ],
+      "rework": []
+    },
+    "scope": {
+      "next": [
+        "interface"
+      ],
+      "reject": [
+        "gate"
+      ],
+      "rework": []
+    },
+    "select": {
+      "next": [
+        "setup"
+      ],
+      "reject": [
+        "triage"
+      ],
+      "rework": []
+    },
+    "selection": {
+      "next": [
+        "architecture"
+      ],
+      "reject": [
+        "interface"
+      ],
+      "rework": []
+    },
+    "setup": {
+      "next": [
+        "context"
+      ],
+      "reject": [
+        "triage"
+      ],
+      "rework": []
+    },
+    "shape": {
+      "next": [
+        "critique"
+      ],
+      "reject": [
+        "context"
+      ],
+      "rework": [
+        "shape"
+      ]
+    },
+    "triage": {
+      "next": [
+        "select"
+      ],
+      "reject": [],
+      "rework": []
+    },
+    "verification": {
+      "next": [
+        "diff-gate",
+        "audit"
+      ],
+      "reject": [
+        "execution"
+      ],
+      "rework": []
+    }
+  },
   "repo": "calionauta/stelow",
   "stages_sha256": "ae95393e8aed5c0e45820a110944b94729bcec558acd26043ade7a15c3ea77d0",
   "transitions_sha256": "5842f15052b44f51876e38358882341eef30b00a8f0d60abce8f9205c8e1d96c"

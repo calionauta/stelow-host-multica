@@ -104,6 +104,47 @@ def load_host(path: Path) -> dict:
     return cfg
 
 
+ONLINE_STATES = ("online", "idle", "busy", "working")
+
+
+def runtime_check(host: dict, multica) -> tuple[bool, str]:
+    """Whether the runtime the agents are bound to can actually take a run.
+
+    A stale runtime id is silent: apply succeeds, the board looks right, and
+    every card sits there because the machine that owns the id is not the
+    machine running the daemon.
+    """
+    runtime_id = host["multica"].get("runtime_id") or ""
+    runtimes = {r.get("id"): r for r in multica.runtimes()}
+    runtime = runtimes.get(runtime_id) or {}
+    state = str(runtime.get("status") or "")
+    ok = bool(runtime_id) and state.lower() in ONLINE_STATES
+    return ok, f"{runtime.get('name') or runtime_id or '(unset)'} is {state or 'missing'}"
+
+
+def missing_upstream(host: dict, skills: list[str]) -> list[str]:
+    """Skills whose SKILL.md is not at the pinned path in the upstream repo.
+
+    A name that looks right and is not there costs an import and half a
+    provisioned workspace: skill import fails at the first bad name, after the
+    good ones were already written.
+    """
+    repo = host["stelow"]["repo"]
+    ref = host["stelow"]["ref"]
+    root = host["stelow"].get("skill_root") or "skills"
+    missing: list[str] = []
+    for skill in skills:
+        url = f"https://raw.githubusercontent.com/{repo}/{ref}/{root}/{skill}/SKILL.md"
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:  # noqa: S310 (pinned https host)
+                ok = resp.status == 200
+        except OSError:
+            ok = False
+        if not ok:
+            missing.append(skill)
+    return missing
+
+
 def preflight(host: dict) -> None:
     """Refuse to write with a half-filled config rather than half-provision a workspace."""
     missing = [key for key in ("workspace_id", "runtime_id") if not str(host["multica"].get(key) or "").strip()]
@@ -296,6 +337,7 @@ def ensure_stages(host: dict, force: bool = False) -> dict:
                 "owners": parse_owners(catalog_text),
                 "rejects": parse_transitions(transitions_text),
                 "sha": lock["stages_sha256"],
+                "stages_sha256": lock["stages_sha256"],
                 "ref": ref,
             }
     fetched = fetch_upstream(repo, ref)
@@ -306,6 +348,8 @@ def ensure_stages(host: dict, force: bool = False) -> dict:
     catalog_path.write_text(catalog_text, encoding="utf-8")
     transitions_path.write_text(transitions_text, encoding="utf-8")
     sha = sha256(stages_text)
+    owners = parse_owners(catalog_text)
+    rejects = parse_transitions(transitions_text)
     write_json(
         LOCK,
         {
@@ -314,14 +358,21 @@ def ensure_stages(host: dict, force: bool = False) -> dict:
             "stages_sha256": sha,
             "catalog_sha256": sha256(catalog_text),
             "transitions_sha256": sha256(transitions_text),
+            # Persisted, not just returned: build_plan derives each column's
+            # skills from these owners and doctor checks the back-edges against
+            # these rejects. Reading them only in memory left both checks
+            # silently empty on the next command.
+            "owners": owners,
+            "rejects": rejects,
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
     return {
         "intents": parse_intents(stages_text),
-        "owners": parse_owners(catalog_text),
-        "rejects": parse_transitions(transitions_text),
+        "owners": owners,
+        "rejects": rejects,
         "sha": sha,
+        "stages_sha256": sha,
         "ref": ref,
     }
 
@@ -423,6 +474,30 @@ class Multica:
             out[name] = ident
         return out
 
+    @staticmethod
+    def _one(payload, what: str) -> dict:
+        """The single object a create or update returns.
+
+        These payloads are richer than list rows — an agent carries its skills,
+        env and labels as their own lists — so "the first list of dicts" is the
+        wrong rule here and used to fail the run after the skills were imported.
+        """
+        if isinstance(payload, dict):
+            if payload.get("id"):
+                return payload
+            for key in ("agent", "data", "result", "item"):
+                value = payload.get(key)
+                if isinstance(value, dict) and value.get("id"):
+                    return value
+            raise Fail(f"{what}: the payload has no object with an id")
+        if isinstance(payload, list) and len(payload) == 1:
+            if isinstance(payload[0], dict) and payload[0].get("id"):
+                return payload[0]
+        raise Fail(f"{what}: expected one object, got {len(payload) if isinstance(payload, list) else type(payload).__name__}")
+
+    def runtimes(self) -> list[dict]:
+        return self._rows(self.json(["runtime", "list"]), "runtime list")
+
     def skills(self) -> dict[str, str]:
         return self._by_name(self._rows(self.json(["skill", "list"]), "skill list"), "skill list")
 
@@ -508,13 +583,24 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
             # Clamp to the preceding column instead of emitting a dangling status.
             col["back_to"] = columns[index - 1]["id"] if index else ""
     instructions = section_map(ROOT / "stages" / "columns.md")
+    owners = {}
+    try:
+        owners = read_json(LOCK, "stelow.lock.json").get("owners") or {}
+    except Fail:
+        owners = {}
+
     for col in columns:
         if not instructions.get(col["id"]):
             raise Fail(f"stages/columns.md has no ## {col['id']} section — every column needs instructions")
 
+    def column_skills(col: dict) -> list[str]:
+        """The catalog owner of each stage, then the supporting skills."""
+        derived = [owners.get(stage) for stage in col["stages"] if owners.get(stage)]
+        return list(dict.fromkeys(derived + list(col.get("skills") or [])))
+
     skills: list[str] = []
     for col in columns:
-        for skill in col.get("skills") or []:
+        for skill in column_skills(col):
             if skill not in skills:
                 skills.append(skill)
     agents: list[dict] = []
@@ -527,7 +613,7 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
         if name not in by_name:
             by_name[name] = {"agent": name, "skills": []}
             agents.append(by_name[name])
-        for skill in col.get("skills") or []:
+        for skill in column_skills(col):
             # Two columns may share one agent (fewer, broader agents add tokens
             # nowhere and dilute attention less); the agent needs the union, or
             # the stages it handles lose their owner and dispatch unguarded.
@@ -642,25 +728,17 @@ def cmd_plan(host: dict, args, groups, lock) -> int:
 
 
 def owner_gaps(plan: dict, owners: dict[str, str]) -> list[str]:
-    """Every stage's owning skill must be loaded by the agent that handles it.
+    """Stages in the plan whose catalog entry names no skill.
 
-    This is the drift alarm that matters most: stelow adds a stage, or points a
-    stage at a new skill, and the host keeps dispatching that stage to an agent
-    that has never read the skill.
+    A column's skills are derived from these owners, so a stage without one is a
+    stage whose instructions no agent loads — it would run on the column text
+    alone.
     """
-    by_agent = {a["agent"]: set(a["skills"]) for a in plan["agents"]}
     gaps: list[str] = []
     for col in plan["columns"]:
-        if col["gate"] and plan["gates"] != "agent":
-            # A human handler reads the gate skill themselves; no agent to check.
-            continue
-        skills = by_agent.get(col["agent"], set())
         for stage in col["stages"]:
-            owner = owners.get(stage)
-            if not owner:
-                gaps.append(f"{col['id']}: stage {stage} has no owner in stage-catalog.json")
-            elif owner not in skills:
-                gaps.append(f"{col['id']}: stage {stage} is owned by {owner}, which agent {col['agent']} does not load")
+            if not owners.get(stage):
+                gaps.append(f"{col['id']}: stage {stage} has no owner in the stage catalog")
     return gaps
 
 
@@ -709,6 +787,7 @@ def flow_gaps(plan: dict, edges: dict[str, dict[str, list[str]]], universe: dict
 
 
 def cmd_doctor(host: dict, args, groups, lock) -> int:
+    offline = getattr(args, "offline", False)
     checks: list[tuple[str, bool, str]] = []
 
     def check(name: str, ok: bool, detail: str = "") -> None:
@@ -734,29 +813,27 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
     # 5. skill ownership lines up with the columns
     plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
     gaps = owner_gaps(plan, owners)
-    check("stage owners loaded by their agent", not gaps, "; ".join(gaps[:3]))
+    check("every planned stage has an owner", not gaps, "; ".join(gaps[:3]))
 
     # 6. the back-edges reproduce the transitions table
     flows = flow_gaps(plan, lock.get("rejects") or {}, stage_universe(groups))
     check("gate back-edges match transitions", not flows, "; ".join(flows[:3]))
 
-    # 6. the upstream skills are publicly importable
-    repo = host["stelow"]["repo"]
-    ref = host["stelow"]["ref"]
-    root = host["stelow"].get("skill_root") or "skills"
-    probe = plan["skills"][0] if plan["skills"] else "stelow-workflow-orchestrator"
-    url = f"https://raw.githubusercontent.com/{repo}/{ref}/{root}/{probe}/SKILL.md"
-    offline = getattr(args, "offline", False)
+    # 6. every planned skill is at the pinned upstream path
     if not offline:
-        try:
-            with urllib.request.urlopen(url, timeout=20) as resp:  # noqa: S310 (pinned https host)
-                reachable = resp.status == 200
-        except OSError as exc:
-            reachable = False
-            url = f"{url} ({exc})"
-        check("skills publicly importable", reachable, url)
+        missing = missing_upstream(host, plan["skills"])
+        check(
+            "every planned skill is importable",
+            not missing,
+            f"{len(missing)} of {len(plan['skills'])} not found: " + ", ".join(missing[:4]),
+        )
 
-    # 7. the live workspace answers, if the CLI is usable
+    # 7. the runtime the agents are bound to is actually online
+    if found and not offline:
+        runtime_ok, runtime_detail = runtime_check(host, Multica(host))
+        check("runtime is online", runtime_ok, runtime_detail)
+
+    # 8. the live workspace answers, if the CLI is usable
     if found and not offline:
         multica = Multica(host)
         try:
@@ -814,6 +891,11 @@ def ensure_agent(multica: Multica, host: dict, agent: str, skills: list[str], sk
         model = host["multica"].get("model") or ""
         if model:
             common += ["--model", model]
+        runtime = host["multica"].get("runtime_id") or ""
+        if runtime:
+            # Config is authoritative: a stale runtime id is the quiet way an
+            # agent ends up bound to a machine that will never take the run.
+            common += ["--runtime-id", runtime]
         multica.run(["agent", "update", agent_id] + common)
     else:
         create = ["agent", "create", "--name", name, "--instructions", body, "--description", description]
@@ -828,10 +910,7 @@ def ensure_agent(multica: Multica, host: dict, agent: str, skills: list[str], sk
         if host["agents"].get("permission"):
             create += ["--permission-mode", host["agents"]["permission"]]
         payload = multica.json(create)
-        rows = multica._rows(payload, "agent create")
-        agent_id = rows[0].get("id") if rows else None
-        if not agent_id:
-            raise Fail(f"agent create {name} returned no id")
+        agent_id = multica._one(payload, "agent create")["id"]
         say(f"  + agent {name}")
     ids = [skill_ids[s] for s in skills if s in skill_ids]
     multica.run(["agent", "skills", "set", agent_id, "--skill-ids", ",".join(ids)])
@@ -841,6 +920,15 @@ def ensure_agent(multica: Multica, host: dict, agent: str, skills: list[str], sk
 def cmd_apply(host: dict, args, groups, lock) -> int:
     plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
     preflight(host)
+    if not getattr(args, "offline", False):
+        # Before the first write: a bad skill name would otherwise fail the run
+        # with half the skills already imported.
+        missing = missing_upstream(host, plan["skills"])
+        if missing:
+            raise Fail(
+                "not at the pinned path in "
+                f"{host['stelow']['repo']}@{host['stelow']['ref']}: {', '.join(missing)}"
+            )
     multica = Multica(host)
     say(f"applying {plan['workflow']} (intent={plan['intent']}, gates={plan['gates']})")
     for skill in plan["skills"]:
@@ -910,12 +998,21 @@ def cmd_verify(host: dict, args, groups, lock) -> int:
         if not live_steps:
             problems.append(f"workflow {plan['workflow']} exposes no steps")
         expected_steps = build_steps(plan, host, resolve, create=False)
-        got = [s.get("status_key") for s in live_steps]
         want = [s.get("status_key") for s in expected_steps]
+        # Multica appends its own terminal statuses (cancelled) to every
+        # workflow. A built-in column we never asked for is not drift; a custom
+        # one is.
+        got = [
+            s.get("status_key")
+            for s in live_steps
+            if s.get("status_key") in want or s.get("status_key") not in RESERVED
+        ]
+        live_by_key = {s.get("status_key"): s for s in live_steps}
         if got != want:
             problems.append(f"workflow steps differ: want {want} got {got}")
         else:
-            for want_step, got_step in zip(expected_steps, live_steps):
+            for want_step in expected_steps:
+                got_step = live_by_key.get(want_step.get("status_key")) or {}
                 want_next = want_step.get("next_status_key")
                 if want_next and got_step.get("next_status_key") != want_next:
                     problems.append(f"{want_step['status_key']}: next is {got_step.get('next_status_key')!r}, want {want_next!r}")
@@ -924,7 +1021,12 @@ def cmd_verify(host: dict, args, groups, lock) -> int:
                     problems.append(f"{want_step['status_key']}: back is {got_step.get('back_status_key')!r}, want {want_back!r}")
                 live_handler = got_step.get("handler") if isinstance(got_step.get("handler"), dict) else {}
                 want_handler = want_step.get("handler") or {}
-                if want_handler.get("type") != live_handler.get("type") or (
+                # The API spells "nothing happens here" as {"type": "none"}, while
+                # a bookend step simply omits the field. Same meaning, and
+                # comparing the raw values reported drift on todo and done.
+                want_type = want_handler.get("type") or "none"
+                live_type = live_handler.get("type") or "none"
+                if want_type != live_type or (
                     want_handler.get("id") and want_handler.get("id") != live_handler.get("id")
                 ):
                     label = want_handler.get("type") or "none"
@@ -952,7 +1054,7 @@ def cmd_status(host: dict, args, groups, lock) -> int:
     live_skills = multica.skills()
     live_agents = multica.agents()
     live_wf = multica.workflows()
-    say(f"stelow  ref={lock['ref']}  stages.sha256={str(lock['stages_sha256'])[:12]}")
+    say(f"stelow  ref={lock['ref']}  stages.sha256={str(lock.get('stages_sha256') or lock.get('sha') or '?')[:12]}")
     say(f"skills  {sum(1 for s in plan['skills'] if s in live_skills)}/{len(plan['skills'])} of this intent present "
         f"({len(live_skills)} in workspace)")
     say(f"agents  {sum(1 for a in plan['agents'] if agent_name(host, a['agent']) in live_agents)}/{len(plan['agents'])} of this intent present "
