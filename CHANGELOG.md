@@ -4,6 +4,17 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.13] - 2026-11-15
+
+### Fixed
+
+- **The orphan check reported every finished card.** `done` has no run and no
+marker, which is correct, so adding terminal statuses to the known set made both
+closed cards on the board read as abandoned. `TERMINAL_STATUSES` excludes them in
+both checks, with a test that says why. The five-minute timer caught this within
+minutes of the release that introduced it, which is the closest thing to a
+regression test for a regression test.
+
 ## [0.1.12] - 2026-11-15
 
 Everything here came out of reading the first real card's timeline end to end and

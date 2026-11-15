@@ -1030,6 +1030,16 @@ class TestTheEntryColumn(HostCase):
         self.assertEqual(orphans, ["CAL-9"])
         self.assertEqual((unmarked, stale), ([], []))
 
+    def test_a_closed_card_is_not_an_orphan(self):
+        # Catches: the first timer run reporting two finished cards as abandoned,
+        # because a closed card has no run and no marker and never should.
+        issues = [{"id": "i1", "key": "CAL-3", "status": "done"}]
+        known = {"intake", "todo", "done", "cancelled"}
+        self.assertEqual(
+            HOST.board_findings(issues, set(), known, set(), {})[1], []
+        )
+        self.assertEqual(HOST.stalled_cards(issues, known, 48, now=None), [])
+
     def test_the_policy_states_how_long_a_stage_may_sit(self):
         # Catches: the restart delay living only in a prompt.
         policy = json.loads((REPO / "config" / "columns.json").read_text())["policy"]

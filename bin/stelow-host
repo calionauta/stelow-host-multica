@@ -1001,7 +1001,7 @@ def stalled_cards(issues, known, hours, now=None):
     stalled = []
     for issue in issues:
         status = str(issue.get("status") or "")
-        if status not in known:
+        if status not in known or status in TERMINAL_STATUSES:
             continue
         stamp = issue.get("updated_at") or issue.get("created_at")
         if not stamp:
@@ -1042,6 +1042,11 @@ def back_edge_findings(events, groups, limit):
 
 
 HUMAN_GATE_MARKER = "needs-human"
+
+# A closed card has no run and no marker and that is correct. Without this the
+# orphan check fires on every card that ever finished, which is how the first
+# timer run reported two closed cards as abandoned.
+TERMINAL_STATUSES = {"done", "cancelled"}
 STALL_NUDGE = (
     "The previous run ended without moving this card. Read the card, do the stage, then finish one of two "
     "ways: move it forward with its artifact, or mark it needs-human and say in one line who owes what. "
@@ -1078,7 +1083,7 @@ def board_findings(issues, gates, known, running, labels):
     for issue in issues:
         issue_id = str(issue.get("id") or "")
         status = str(issue.get("status") or "")
-        if not issue_id or status not in known:
+        if not issue_id or status not in known or status in TERMINAL_STATUSES:
             continue
         key = issue.get("key") or issue_id
         marked = HUMAN_GATE_MARKER in (labels.get(issue_id) or set())
