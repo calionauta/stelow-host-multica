@@ -4,6 +4,22 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.3.5] - 2026-11-15
+
+### Fixed
+
+- **`verify` reported every lane as drift.** It passed the project's *title* to
+  `project workflow get`, which answers about a project id, so `Explore` and
+  `Research` read as "does not use the workflow" on a converged workspace. A check
+  nobody can satisfy is a check nobody runs.
+
+### Documentation
+
+- `docs/operations.md` records the four things splitting the board found, each with
+  the mechanism that stops it: a lane card judged against the chain's artifacts, a
+  research card reported as explore, a working column with no menu, and a run that
+  stayed `running` after its process died.
+
 ## [0.3.4] - 2026-11-15
 
 ### Added

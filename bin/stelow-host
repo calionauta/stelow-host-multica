@@ -2041,10 +2041,17 @@ def verify_plan(host: dict, args, plan: dict) -> int:
                         f"{want_step['status_key']}: handler is {live_handler.get('type')!r}, want {label!r}"
                     )
     if plan["project"]:
-        current = multica.project_workflow(plan["project"])
-        text = json.dumps(current or {})
-        if plan["workflow"] not in text:
-            problems.append(f"project {plan['project']} does not use {plan['workflow']}")
+        # A lane's project is named, not identified: `project workflow get` answers
+        # about an id, so passing the title asked about a project that does not exist
+        # and reported a converged lane as drift.
+        project_id = resolve_project(multica, plan["project"]) or ""
+        if not project_id:
+            problems.append(f"project {plan['project']} does not exist")
+        else:
+            current = multica.project_workflow(project_id)
+            text = json.dumps(current or {})
+            if plan["workflow"] not in text:
+                problems.append(f"project {plan['project']} does not use {plan['workflow']}")
     if problems:
         say(f"DRIFT ({len(problems)})")
         for problem in problems:

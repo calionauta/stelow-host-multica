@@ -82,8 +82,9 @@ in order: python, the `multica` binary on `PATH`, `workspace_id` and
 `runtime_id`, that the stage model is pinned, that the stage **owners** were read
 from the catalog, that every stage's owning skill is loaded by the agent that
 handles that stage, that every back-edge matches the transitions table, that the
-skills are publicly importable, and that the CLI is authorized (`--offline` skips
-the last two).
+skills are publicly importable, that the CLI is authorized (`--offline` skips
+the last two), that nothing on the board waits unmarked or idle, and that no run
+has been reported `running` past `policy.max_run_minutes`.
 
 The owner check is the one that catches real drift. `stage-catalog.json` says
 which skill each stage dispatches to; a column's agent must load that skill, or
@@ -158,6 +159,22 @@ The two stalls that needed a human mention to restart are the ones that matter:
 the workflow hands the card forward correctly and the next stage simply does not
 begin. Nothing inside a run can notice that, because the run is over. Only a
 reader of the board can, and the reader is the timer.
+
+## What splitting the chain into three workflows found (2026-11-15)
+
+The board used to hold every shape in one graph, as tracks. Splitting it into
+three workflows found four things a single board had been hiding, all of them by
+running cards rather than by reading code:
+
+| symptom | cause | what prevents it now |
+|---|---|---|
+| an Explore card was told it owed `01-spec-product.md` … `18-audit-table.md` | `card` compared every card against the chain's artifact list | a lane card owes one artifact; `card` names the lane and the strategy it judged it against |
+| a Research card reported `lane: explore` | both lanes use `bucket`/`doing`/`review`, and the first board alphabetically answered | the strategy decides, then the project; a card neither places is refused as ambiguous |
+| `doing` said "load exactly one skill from the menu" and carried no menu | the working column's text was pushed without the menu block, and only a helper the doctor used assembled it | `board_plan` appends the menu; the step is 2696 characters on the research lane |
+| a run sat `running` for half an hour after its process died | a tracker reports a run as running until something ends it | `doctor` compares `started_at` with `policy.max_run_minutes`; `--fix` marks and re-arms |
+
+The lesson repeats the one above: a card that waits with nothing saying so is the
+failure mode of every tracker, and only a reader of the board catches it.
 
 Run it every five minutes, not every fifteen: it starts no agent, so a shorter
 interval costs nothing, and five minutes is the difference between a stage that

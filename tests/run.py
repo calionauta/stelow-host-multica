@@ -662,6 +662,29 @@ class TestVerify(HostCase):
             step.setdefault("handler", {"type": "none"})
         self.assertEqual(HOST.cmd_verify(self.host, self.args(), self.groups, self.lock), 0)
 
+    def test_verify_resolves_a_lane_project_by_its_title(self):
+        # Catches: verify handing the project's *title* to `project workflow get`,
+        # which answers about a project that does not exist, so a converged lane
+        # reported drift and the check nobody could satisfy stopped being run.
+        self.fake.state["project_titles"]["proj-e"] = "Explore"
+        lane = types.SimpleNamespace(workflow_name="stelow-explore", all_workflows=False, intent=None,
+                                     gates="human", project=None, all=False, refresh_skills=False,
+                                     migrate=False, offline=True, json=False, fix=False)
+        self.assertEqual(HOST.cmd_apply(self.host, lane, self.groups, self.lock), 0)
+        self.assertEqual(HOST.cmd_verify(self.host, lane, self.groups, self.lock), 0)
+
+    def test_verify_names_a_lane_project_that_does_not_exist(self):
+        # Catches: a missing project reading as "does not use the workflow", which
+        # sends a reader to `apply` instead of to `install --all-projects`.
+        plan = HOST.board_plan(self.host, HOST.load_board("research"))
+        self.fake.state["workflows"]["stelow-research"] = [
+            {"status_key": column["id"]} for column in plan["columns"]
+        ]
+        self.assertEqual(HOST.cmd_verify(self.host, types.SimpleNamespace(
+            workflow_name="stelow-research", all_workflows=False, intent=None, gates="human",
+            project=None, all=False, refresh_skills=False, migrate=False, offline=True, json=False,
+            fix=False), self.groups, self.lock), 1)
+
     def test_status_prints_a_pinned_digest(self):
         """status crashed on a KeyError after the lock gained its own sha keys."""
         self.apply()
