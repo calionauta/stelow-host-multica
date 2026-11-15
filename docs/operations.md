@@ -117,3 +117,47 @@ forward:
 If a column's `back_to` lands one step early — pointing a rejected diff review at
 `verify` instead of `build` — the rework skips the re-execution and the loop is a
 forward move with extra steps. `doctor` reports it by name.
+
+## First run on a live workspace
+
+1. `multica login` (browser, or `--token`), then `multica workspace list`.
+2. `multica runtime list` — pick the row whose **provider** you want *and* whose
+   **status is online**. A daemon registers one runtime per provider it finds,
+   and an older daemon's rows linger as `offline` under the same name; binding
+   agents to one of those makes every card sit still while `apply` reports
+   success. If nothing is online, run `multica daemon start` on the machine that
+   has the agent CLI signed in.
+3. Export the ids instead of committing them: `MULTICA_WORKSPACE_ID`,
+   `MULTICA_RUNTIME_ID`, `MULTICA_PROJECT_ID`.
+4. `multica project create --title stelow --description "..."` — the flag is
+   `--title`, not `--name`.
+5. `sync`, `doctor`, `plan`, `apply`, `verify`.
+
+A healthy first apply prints one `+ skill` line per skill, one `+ agent` per
+agent, one `+ workflow`, and `= project <id> → <workflow>`. A second apply
+prints only `=` lines. `verify` must exit 0, and `doctor` must end with
+`all checks passed`.
+
+## Smoke test after provisioning
+
+The point is not that the workflow exists; it is that a card moves and comes
+back. Two runs, one card:
+
+```bash
+# 1. a card in the first column is handed to the first agent and starts a run
+multica issue create --project <id> --status intake --title "Smoke: intake hands off" \
+  --description-file smoke.md
+multica issue runs <issue-id>            # a run appears, then completes
+multica issue timeline <issue-id>        # comment + "intake → framing" by the agent
+
+# 2. the gate: with --gates agent the step hands to the reviewer; a rejection
+#    must land on the column transitions.md names (/bin/stelow plan shows it)
+multica issue status <issue-id> product_gate
+multica issue timeline <issue-id>        # product_gate → framing, not design
+```
+
+`multica issue usage <issue-id>` reports input, output and cache-read tokens per
+run — useful for sizing a stage before running it on real work.
+
+If the card does not move, check in this order: `multica daemon status`,
+`runtime list` (online?), `issue runs` (a run at all?), then `daemon logs`.
