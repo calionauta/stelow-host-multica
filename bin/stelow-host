@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from datetime import datetime, timezone
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -730,7 +731,15 @@ def cmd_sync(host: dict, args) -> int:
 
 
 def cmd_plan(host: dict, args, groups, lock) -> int:
-    plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
+    board_spec = getattr(args, "board", None)
+    if board_spec:
+        board = load_board(board_spec)
+        problems = board_problems(board)
+        if problems:
+            raise Fail("board is not runnable: " + "; ".join(problems))
+        plan = board_plan(host, board)
+    else:
+        plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
     if args.json:
         say(json.dumps(plan, indent=2))
         return 0
@@ -807,21 +816,205 @@ def flow_gaps(plan: dict, edges: dict[str, dict[str, list[str]]], universe: dict
     return gaps
 
 
-def artifact_report(present, groups):
+def artifact_report(present, groups, aliases=None):
     """Which declared artifacts a card is missing.
 
     `present` is the set of filenames attached anywhere on the card. Pure, so the
     answer can be tested without a workspace: a card is only reproducible from
     itself if every stage left its files behind, and this is how a host finds out
     that one did not.
+
+    `aliases` maps a declared name to the names it was attached under before the
+    naming rule existed. A card that ran across the change is not broken, and
+    calling it broken is how a report stops being read: the hit is reported as
+    legacy instead of as a gap.
     """
-    declared, missing = [], []
+    aliases = aliases or {}
+    declared, missing, legacy = [], [], []
     for group in groups:
         for name in group.get("artifacts") or []:
             declared.append(name)
-            if name not in present:
+            if name in present:
+                continue
+            older = [alias for alias in aliases.get(name) or [] if alias in present]
+            if older:
+                legacy.append((name, older[0]))
+            else:
                 missing.append((group["id"], name))
-    return declared, missing
+    return declared, missing, legacy
+
+
+def load_board(spec: str):
+    """Load a board by name (`research`) or by path (`boards/research.json`)."""
+    candidate = ROOT / "boards" / (spec if spec.endswith(".json") else spec + ".json")
+    path = candidate if candidate.is_file() else Path(spec)
+    if not path.is_file():
+        raise Fail(f"no board called {spec}: expected {candidate} or a path to a json file")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise Fail(f"{path} is not valid json: {exc}") from exc
+
+
+def board_problems(board: dict) -> list[str]:
+    """What is wrong with a board declaration, in the order a person would ask.
+
+    A board is the loose counterpart of the chain: one card, one skill, one
+    artifact. These rules are the whole reason it can be short, so each one is a
+    failure the board would otherwise produce silently on a real card.
+    """
+    problems = []
+    for field in ("workflow", "project", "runner", "skill_prefix", "menu", "columns"):
+        if not board.get(field):
+            problems.append(f"missing {field}")
+    if problems:
+        return problems
+
+    if not str(board["workflow"]).startswith("stelow-"):
+        problems.append("workflow must start with 'stelow-' so it is obvious what owns it")
+    if not (ROOT / "agents" / f"{board['runner']}.md").is_file():
+        problems.append(f"no agents/{board['runner']}.md: an agent with no instructions is an empty prompt")
+
+    seen = set()
+    for column in board["columns"]:
+        if column.get("id") in seen:
+            problems.append(f"column {column.get('id')} declared twice")
+        seen.add(column.get("id"))
+        if not str(column.get("instructions") or "").strip():
+            problems.append(f"column {column.get('id')} has no instructions")
+        if column.get("category") not in {"unstarted", "started"}:
+            problems.append(f"column {column.get('id')} has category {column.get('category')!r}")
+        if column.get("gate") and not column.get("instructions"):
+            problems.append(f"gate column {column.get('id')} says nothing about what a person decides")
+
+    runners = [c for c in board["columns"] if not c.get("gate")]
+    if len(runners) != 1:
+        problems.append(f"exactly one working column expected, found {len(runners)}")
+    elif runners[0].get("agent") != board["runner"]:
+        problems.append(f"the working column must be run by {board['runner']}, not {runners[0].get('agent')}")
+
+    for column in board["columns"]:
+        back = column.get("back_to")
+        if back and back not in seen:
+            problems.append(f"column {column.get('id')} backs to {back}, which does not exist")
+
+    menu = board["menu"]
+    for entry in menu:
+        skill = str(entry.get("skill") or "")
+        if not skill.startswith(str(board["skill_prefix"])):
+            problems.append(f"menu entry {skill!r} is not a {board['skill_prefix']} skill")
+        if not str(entry.get("when") or "").strip():
+            problems.append(f"menu entry {skill!r} has no 'when': a menu without reasons is a guess")
+    if len({entry.get("skill") for entry in menu}) != len(menu):
+        problems.append("menu lists the same skill twice")
+    return problems
+
+
+def board_plan(host: dict, board: dict) -> dict:
+    """A board as the plan shape `build_steps` already knows how to push."""
+    skills = [entry["skill"] for entry in board["menu"]]
+    return {
+        "workflow": board["workflow"],
+        "intent": board["board"],
+        "gates": board.get("gates") or "human",
+        "project": board["project"],
+        "columns": [dict(column) for column in board["columns"]],
+        "agents": [{"agent": board["runner"], "skills": skills}],
+        "skills": skills,
+        "_board": True,
+    }
+
+
+def cmd_board(host: dict, args) -> int:
+    specs = getattr(args, "names", None) or []
+    if not specs:
+        specs = sorted(p.stem for p in (ROOT / "boards").glob("*.json"))
+    bad = 0
+    for spec in specs:
+        board = load_board(spec)
+        problems = board_problems(board)
+        issue = board.get("board") or spec
+        if problems:
+            bad += 1
+            say(f"{issue}: {len(problems)} problem(s)")
+            for problem in problems:
+                say(f"  - {problem}")
+            continue
+        menu = len(board["menu"])
+        say(f"{issue}: {board['workflow']} → project {board['project']!r}, {len(board['columns'])} columns, "
+            f"{menu} skills, one per card")
+        for column in board["columns"]:
+            who = "a person" if column.get("gate") else board["runner"]
+            back = f", back to {column['back_to']}" if column.get("back_to") else ""
+            say(f"  {column['id']:<8} {column['label']:<10} {who}{back}")
+    if bad:
+        raise Fail(f"{bad} board(s) would not survive a real card")
+    return 0
+
+
+def load_policy() -> dict:
+    try:
+        return json.loads((ROOT / "config" / "columns.json").read_text()).get("policy") or {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def load_aliases() -> dict:
+    try:
+        return json.loads((ROOT / "config" / "columns.json").read_text()).get("artifact_aliases") or {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def stalled_cards(issues, known, hours, now=None):
+    """Cards that have not moved in `hours`.
+
+    Pure: `now` is passed in so the test does not depend on the clock. The board
+    check catches a card that is *invisible*; this catches a card that is visible
+    and idle, which is the other way a workflow quietly stops delivering.
+    """
+    now = now or datetime.now(timezone.utc)
+    stalled = []
+    for issue in issues:
+        status = str(issue.get("status") or "")
+        if status not in known:
+            continue
+        stamp = issue.get("updated_at") or issue.get("created_at")
+        if not stamp:
+            continue
+        try:
+            touched = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if touched.tzinfo is None:
+            touched = touched.replace(tzinfo=timezone.utc)
+        idle = (now - touched).total_seconds() / 3600
+        if idle > hours:
+            stalled.append((issue.get("key") or str(issue.get("id")), status, round(idle, 1)))
+    return stalled
+
+
+def back_edge_findings(events, groups, limit):
+    """Cards that spent their back-edge budget.
+
+    Pure: `events` is one card's timeline, `groups` the columns. A budget belongs
+    to a pair — a column and the `back_to` it can send a card to — and every
+    status change along that pair spends one round.
+
+    The reason this is a check and not advice: two rounds of audit is a reviewer
+    working, a fourth is the loop deciding by attrition, and nothing in a prompt
+    can notice the difference from inside one run.
+    """
+    pairs = {(str(group["id"]), str(group["back_to"])) for group in groups if group.get("back_to")}
+    counts: dict[tuple[str, str], int] = {}
+    for event in events:
+        if str(event.get("action") or "") != "status_changed":
+            continue
+        details = event.get("details") or {}
+        pair = (str(details.get("from") or ""), str(details.get("to") or ""))
+        if pair in pairs:
+            counts[pair] = counts.get(pair, 0) + 1
+    return [(src, dst, n) for (src, dst), n in sorted(counts.items()) if n > limit]
 
 
 HUMAN_GATE_MARKER = "needs-human"
@@ -884,9 +1077,13 @@ def cmd_card(host: dict, args, groups) -> int:
             name = str(attachment.get("filename") or "")
             if name:
                 present.add(name)
-    declared, missing = artifact_report(present, groups)
+    aliases = load_aliases()
+    declared, missing, legacy = artifact_report(present, groups, aliases)
+    kept = len(declared) - len(missing)
     say(f"{issue.get('key') or issue_id}  status: {status}")
-    say(f"declared: {len(declared)}   present: {len(declared) - len(missing)}   missing: {len(missing)}")
+    say(f"declared: {len(declared)}   present: {kept}   missing: {len(missing)}")
+    for name, older in legacy:
+        say(f"  legacy   {older}  stands in for {name}")
     for group_id, name in missing:
         say(f"  missing  {name}  ({group_id})")
     if status != "done":
@@ -960,11 +1157,14 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             check("board readable", False, str(exc).splitlines()[0][:120])
             issues = None
         if issues is not None:
-            running, labels = set(), {}
+            running, labels, spent = set(), {}, {}
+            limit = int(load_policy().get("max_back_edges", 2))
+            known = {str(group["id"]) for group in groups}
             for issue in issues:
                 issue_id = str(issue.get("id") or "")
                 if not issue_id:
                     continue
+                status = str(issue.get("status") or "")
                 try:
                     runs = Multica._rows(live.json(["issue", "runs", issue_id, "--active"]), "issue runs")
                 except Fail:
@@ -976,15 +1176,36 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                 except Fail:
                     rows = []
                 labels[issue_id] = {str(row.get("name") or "") for row in rows if row.get("name")}
-            known = {str(group["id"]) for group in groups}
+                if status in known:
+                    try:
+                        events = Multica._rows(
+                            live.json(["issue", "timeline", issue_id, "--tail", "200"]), "issue timeline"
+                        )
+                    except Fail:
+                        events = []
+                    over = back_edge_findings(events, groups, limit)
+                    if over:
+                        spent[issue.get("key") or issue_id] = over
             unmarked, orphans, stale = board_findings(issues, gate_ids(groups), known, running, labels)
             check("no gate card waits unmarked", not unmarked, "waiting on a person: " + ", ".join(unmarked[:4]))
             check("no orphaned card", not orphans, "run ended, nothing queued: " + ", ".join(orphans[:4]))
             check("no stale waiting marker", not stale, ", ".join(stale[:4]))
-            if getattr(args, "fix", False) and unmarked:
+            detail = "; ".join(
+                f"{key}: " + ", ".join(f"{src}→{dst} x{n}" for src, dst, n in pairs)
+                for key, pairs in list(spent.items())[:3]
+            )
+            check(f"no card over {limit} back-edge(s)", not spent, detail or "")
+            idle_limit = float(load_policy().get("max_idle_hours", 48))
+            stalled = stalled_cards(issues, known, idle_limit)
+            idle_detail = ", ".join(f"{key} ({status}, {hours}h)" for key, status, hours in stalled[:4])
+            check(f"no card idle beyond {idle_limit:g}h", not stalled, idle_detail)
+            stale_idle = [key for key, _status, _hours in stalled]
+            park = unmarked + [key for key in spent if key not in unmarked]
+            park += [key for key in stale_idle if key not in park]
+            if getattr(args, "fix", False) and park:
                 by_key = {issue.get("key"): issue for issue in issues}
                 marked = 0
-                for key in unmarked:
+                for key in park:
                     issue_id = str((by_key.get(key) or {}).get("id") or "")
                     if not issue_id:
                         continue
@@ -992,7 +1213,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                     live.run(["issue", "wakeup", "create", issue_id, "--after", "45m",
                               "--instruction", WAITING_NUDGE], can_fail=True)
                     marked += 1
-                say(f"fix: marked {marked} waiting card(s) with {HUMAN_GATE_MARKER} and a 45m nudge")
+                say(f"fix: marked {marked} card(s) with {HUMAN_GATE_MARKER} and a 45m nudge")
     if offline:
         check("offline", True, "network and live-workspace checks skipped")
 
@@ -1067,6 +1288,14 @@ def ensure_agent(multica: Multica, host: dict, agent: str, skills: list[str], sk
     return agent_id
 
 
+def project_exists(multica: Multica, title: str) -> bool:
+    try:
+        rows = Multica._rows(multica.json(["project", "list"]), "project list")
+    except Fail:
+        return False
+    return any(str(row.get("title") or row.get("name") or "") == title for row in rows)
+
+
 def cmd_apply(host: dict, args, groups, lock) -> int:
     plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
     preflight(host)
@@ -1103,6 +1332,12 @@ def cmd_apply(host: dict, args, groups, lock) -> int:
         ])
         say(f"  + workflow {plan['workflow']}")
     if plan["project"]:
+        if plan.get("_board") and not project_exists(multica, plan["project"]):
+            multica.run([
+                "project", "create", "--title", plan["project"],
+                "--description", f"stelow {plan['intent']} board: one card, one skill, one artifact",
+            ])
+            say(f"  + project {plan['project']}")
         cmd = ["project", "workflow", "set", plan["project"], plan["workflow"]]
         if args.migrate:
             for old, new in (host.get("migrate") or {}).items():
@@ -1234,7 +1469,10 @@ def main(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("sync", help="fetch and pin stages.yaml", parents=[common])
     sub.add_parser("plan", help="show what would change", parents=[common])
-    sub.add_parser("apply", help="converge the workspace", parents=[common])
+    apply_cmd = sub.add_parser("apply", help="converge the workspace", parents=[common])
+    apply_cmd.add_argument("--board", help="converge boards/<name>.json instead of the stage chain")
+    board_cmd = sub.add_parser("board", help="check a board declaration without touching the workspace", parents=[common])
+    board_cmd.add_argument("names", nargs="*", help="board names; default is every file in boards/")
     sub.add_parser("verify", help="assert the live workspace matches the plan", parents=[common])
     sub.add_parser("status", help="compact live summary", parents=[common])
     card = sub.add_parser("card", help="what a card kept, and where it stopped", parents=[common])
@@ -1263,6 +1501,8 @@ def main(argv: list[str]) -> int:
             return cmd_verify(host, args, groups, lock)
         if args.command == "status":
             return cmd_status(host, args, groups, lock)
+        if args.command == "board":
+            return cmd_board(host, args)
         if args.command == "card":
             return cmd_card(host, args, groups)
         if args.command == "doctor":

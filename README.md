@@ -27,6 +27,35 @@ workspace by hand is up to 19 skill imports, 3 agents, 6–11 status columns, an
 a handful of handoffs, most of it easy to get subtly wrong (status keys must
 slugify from the column label, or updates diverge from creation forever).
 
+## Two shapes: the chain, and the boards
+
+The chain carries one idea to shipped code. Most questions are not that, so
+`boards/` declares two loose boards instead: **explore** (one `stelow-workflow-*`
+stage skill applied to something that exists) and **research** (one
+`stelow-product-*` skill on one decision). Three columns, one skill per card:
+
+```bash
+./bin/stelow-host board                 # validate the declarations, no network
+./bin/stelow-host apply --board research
+```
+
+[`docs/boards.md`](docs/boards.md) explains why one card carries exactly one
+skill, and how to add a third board.
+
+## Watching a board that is not moving
+
+```bash
+./bin/stelow-host card <issue>     # what a card kept, and what it still owes
+./bin/stelow-host doctor --fix     # mark the cards that wait on a person
+./bin/board-check.sh               # the above on a timer: rotates its log, counts failures
+```
+
+`doctor` reads the board with CLI calls only — it starts no agent, so running it
+every fifteen minutes costs no tokens. It fails on a card waiting in a gate with
+nothing marking it, a card whose run ended with nothing queued, a marker on a
+card that is running, a card past its back-edge budget, and a card nobody has
+touched in two days.
+
 ## Three agents, not one per column
 
 The mapping is deliberate: **`plan`** (triage → planning), **`build`
@@ -132,14 +161,17 @@ the receipt and advances, or parks the issue with a reason.
 - **Verified**: the stage/intent/catalog parser against the real
   `calionauta/stelow@main`; ownership and back-edges against the pinned
   `stage-catalog.json` and `transitions.md`; `doctor` end to end; the mapping,
-  convergence and gate wiring against an in-process fake of the CLI (30 tests,
+  convergence and gate wiring against an in-process fake of the CLI (78 tests,
   `python3 tests/run.py`).
+- **Not verified**: a board taken from `board` to `apply --board` and then run
+  end to end on a live workspace. The chain is; the boards are new.
 - **Run against a live workspace** before trusting `apply` on yours: `doctor`,
   then `plan`, then `apply` on a fresh project. `docs/operations.md` lists what
   to check and what a failed run looks like.
 
 ## Related
 
+- [`docs/boards.md`](docs/boards.md) — the loose boards, and the one-skill rule.
 - [`calionauta/stelow`](https://github.com/calionauta/stelow) — the methodology.
 - `bb-plugin-stelow` — the bb host: a plugin, because bb needs UI and hooks.
   This repo needs neither, so it is a script.

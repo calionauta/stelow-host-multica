@@ -199,8 +199,69 @@
       ]
     }
   ],
+  "artifact_aliases": {
+    "01-spec-product.md": [
+      "spec-product.md"
+    ],
+    "02-critique-report.md": [
+      "critique-report.md"
+    ],
+    "03-product-decision.md": [
+      "DECISION.md"
+    ],
+    "04-scope-map.json": [
+      "scope-map.json"
+    ],
+    "05-interfaces.md": [
+      "interfaces.md"
+    ],
+    "06-contrast.json": [
+      "contrast.json"
+    ],
+    "07-alternatives.md": [
+      "alternatives.md"
+    ],
+    "08-selected-interface.md": [
+      "selected-interface.md"
+    ],
+    "09-breadboard.json": [
+      "breadboard.json"
+    ],
+    "10-interface-decision.md": [
+      "DECISION.md"
+    ],
+    "11-spec-tech.md": [
+      "spec-tech.md",
+      "spec-tech_v1.md",
+      "spec-tech_v2.md"
+    ],
+    "12-decision.md": [
+      "DECISION.md"
+    ],
+    "13-testing-strategy.md": [
+      "testing-strategy.md"
+    ],
+    "14-tech-decision.md": [
+      "DECISION.md"
+    ],
+    "15-execution-report.md": [
+      "change-report.md",
+      "change-report-v2.md",
+      "change-report-v3.md"
+    ],
+    "16-verification-report.md": [
+      "verify-report.md"
+    ],
+    "17-diff-review.md": [
+      "diff-review.md"
+    ],
+    "18-audit-table.md": [
+      "audit-table.md"
+    ]
+  },
   "policy": {
     "max_back_edges": 2,
-    "_comment": "An audit that sends a card back more than this many times parks it for a person instead of opening another round: at that point the loop is deciding, not the reviewer."
+    "_comment": "An audit that sends a card back more than this many times parks it for a person instead of opening another round: at that point the loop is deciding, not the reviewer.",
+    "max_idle_hours": 48
   }
 }

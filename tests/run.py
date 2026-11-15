@@ -806,6 +806,123 @@ class TestAskingLeavesATrace(unittest.TestCase):
         self.assertIn("Cite the spec's ids", md)
 
 
+class TestBackEdgeBudget(unittest.TestCase):
+    def groups(self):
+        return [
+            {"id": "diff_gate", "back_to": "build"},
+            {"id": "audit", "back_to": "build"},
+            {"id": "build"},
+        ]
+
+    def event(self, src, dst):
+        return {"action": "status_changed", "details": {"from": src, "to": dst}}
+
+    def test_one_round_is_inside_the_budget(self):
+        # Catches: a reviewer doing its job being reported as a runaway loop.
+        events = [self.event("audit", "build"), self.event("build", "audit")]
+        self.assertEqual(HOST.back_edge_findings(events, self.groups(), 2), [])
+
+    def test_the_third_round_trips(self):
+        # Catches: a card ping-ponging while a person is never asked to rule.
+        events = [self.event("audit", "build")] * 3
+        self.assertEqual(HOST.back_edge_findings(events, self.groups(), 2), [("audit", "build", 3)])
+
+    def test_only_declared_pairs_count(self):
+        # Catches: counting any backwards move, so an unrelated transition trips
+        # a budget it never spent.
+        events = [self.event("verify", "build")] * 5
+        self.assertEqual(HOST.back_edge_findings(events, self.groups(), 2), [])
+
+    def test_the_limit_comes_from_the_config(self):
+        # Catches: the number existing only in prose, so the check and the
+        # instructions disagree.
+        policy = json.loads((REPO / "config" / "columns.json").read_text())["policy"]
+        self.assertEqual(policy["max_back_edges"], 2)
+
+
+class TestBoards(unittest.TestCase):
+    def board(self, **overrides):
+        board = {
+            "version": 1, "board": "probe", "workflow": "stelow-probe", "project": "Probe",
+            "gates": "human", "runner": "stelow-probe-runner", "skill_prefix": "stelow-product-",
+            "menu": [{"skill": "stelow-product-pricing", "when": "a price has to be chosen"}],
+            "columns": [
+                {"id": "open", "label": "Open", "category": "unstarted", "gate": True, "instructions": "name the decision"},
+                {"id": "run", "label": "Run", "category": "started", "agent": "stelow-probe-runner", "instructions": "run one skill"},
+                {"id": "review", "label": "Review", "category": "started", "gate": True,
+                 "back_to": "run", "instructions": "read the artifact"},
+            ],
+        }
+        board.update(overrides)
+        return board
+
+    def test_both_shipped_boards_are_runnable(self):
+        # Catches: a board file that reads fine and cannot produce a card.
+        for name in ("explore", "research"):
+            board = HOST.load_board(name)
+            self.assertEqual(HOST.board_problems(board), [], name)
+
+    def test_a_menu_entry_without_a_reason_is_refused(self):
+        # Catches: a runner guessing between 21 skills from names alone.
+        board = self.board()
+        board["menu"] = [{"skill": "stelow-product-pricing"}]
+        self.assertIn("no 'when'", " ".join(HOST.board_problems(board)))
+
+    def test_two_working_columns_are_refused(self):
+        # Catches: a board that quietly becomes a chain again.
+        board = self.board()
+        board["columns"].append({"id": "run2", "label": "Run2", "category": "started",
+                                 "agent": "stelow-probe-runner", "instructions": "again"})
+        self.assertIn("exactly one working column", " ".join(HOST.board_problems(board)))
+
+    def test_a_runner_with_no_agent_file_is_refused(self):
+        # Catches: an agent created with an empty prompt, which runs and says nothing.
+        self.assertIn("agents/stelow-nobody.md", " ".join(HOST.board_problems(self.board(runner="stelow-nobody"))))
+
+    def test_a_back_edge_to_nowhere_is_refused(self):
+        # Catches: a send-back that lands on a status the workflow does not have.
+        board = self.board()
+        board["columns"][2]["back_to"] = "nowhere"
+        self.assertIn("backs to nowhere", " ".join(HOST.board_problems(board)))
+
+    def test_a_board_plan_feeds_the_step_builder(self):
+        # Catches: the board path drifting from the chain path, so apply pushes
+        # something the workflow endpoint rejects.
+        plan = HOST.board_plan({"agents": {}}, HOST.load_board("research"))
+        self.assertEqual(plan["gates"], "human")
+        self.assertEqual([c["id"] for c in plan["columns"]], ["open", "run", "review"])
+        self.assertEqual(len(plan["skills"]), len(HOST.load_board("research")["menu"]))
+
+
+class TestStalledCards(unittest.TestCase):
+    KNOWN = {"run", "review"}
+
+    def issue(self, key, status, stamp):
+        return {"key": key, "id": key, "status": status, "updated_at": stamp}
+
+    def test_a_card_untouched_past_the_limit_is_named(self):
+        # Catches: a workflow that stops delivering while every check passes,
+        # because "nothing is broken" and "nothing is moving" are different.
+        from datetime import datetime, timezone
+        now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
+        issues = [self.issue("CAL-1", "run", "2026-11-13T11:00:00Z"),
+                  self.issue("CAL-2", "run", "2026-11-15T10:00:00Z")]
+        self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now),
+                         [("CAL-1", "run", 49.0)])
+
+    def test_a_closed_card_is_never_stalled(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
+        issues = [self.issue("CAL-3", "done", "2026-01-01T00:00:00Z")]
+        self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now), [])
+
+    def test_a_card_without_a_timestamp_is_skipped_not_crashed(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
+        issues = [{"key": "CAL-4", "id": "CAL-4", "status": "run"}]
+        self.assertEqual(HOST.stalled_cards(issues, self.KNOWN, 48, now), [])
+
+
 class TestArtifactReport(unittest.TestCase):
     def test_a_card_names_what_it_is_missing(self):
         # Catches: a stage that produced nothing, on a card that closed anyway.
@@ -813,13 +930,23 @@ class TestArtifactReport(unittest.TestCase):
             {"id": "framing", "artifacts": ["01-spec-product.md", "02-critique-report.md"]},
             {"id": "audit", "artifacts": ["18-audit-table.md"]},
         ]
-        declared, missing = HOST.artifact_report({"01-spec-product.md", "18-audit-table.md"}, groups)
+        declared, missing, legacy = HOST.artifact_report({"01-spec-product.md", "18-audit-table.md"}, groups)
         self.assertEqual(len(declared), 3)
         self.assertEqual(missing, [("framing", "02-critique-report.md")])
+        self.assertEqual(legacy, [])
 
     def test_a_complete_card_misses_nothing(self):
         groups = [{"id": "framing", "artifacts": ["01-spec-product.md"]}]
         self.assertEqual(HOST.artifact_report({"01-spec-product.md"}, groups)[1], [])
+
+    def test_a_legacy_filename_is_not_a_gap(self):
+        # Catches: a card that ran across the naming change reported as broken,
+        # which is how a report stops being read.
+        groups = [{"id": "audit", "artifacts": ["18-audit-table.md"]}]
+        aliases = {"18-audit-table.md": ["audit-table.md"]}
+        declared, missing, legacy = HOST.artifact_report({"audit-table.md"}, groups, aliases)
+        self.assertEqual(missing, [])
+        self.assertEqual(legacy, [("18-audit-table.md", "audit-table.md")])
 
 
 class TestBoardFindings(unittest.TestCase):

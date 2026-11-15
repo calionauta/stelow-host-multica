@@ -4,6 +4,36 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.1.8] - 2026-11-15
+
+### Added
+
+- **Two boards, declared and checkable**: `boards/explore.json` (14 single-shot
+  `stelow-workflow-*` skills) and `boards/research.json` (21 `stelow-product-*`
+  skills). Three columns, one skill per card, one gate. `stelow-host board`
+  validates them and prints what would be created without touching a workspace;
+  `stelow-host apply --board <name>` converges one, creating its project if it is
+  missing. `docs/boards.md` says why one card carries exactly one skill.
+
+- **The back-edge budget is enforced, not advised.** `doctor` reads each card's
+  timeline and fails when a pair has spent its `policy.max_back_edges`; `--fix`
+  marks the card. Advice in a prompt cannot notice from inside a single run that
+  it is the fourth round.
+
+- **A card idle past `policy.max_idle_hours` (48) fails the same check.** An
+  invisible card and an idle card are the two ways a workflow stops delivering
+  while every other check is green.
+
+- **`card` no longer calls a card broken for running across a rename.**
+  `config/columns.json#artifact_aliases` maps each declared name to the names it
+  was attached under before the naming rule; the report lists those as `legacy`
+  instead of as gaps. On the smoke card that is 16 of 18 present, not 2.
+
+- **`bin/board-check.sh`** — the timer wrapper: rotates its own log, keeps a
+  failure streak that survives restarts, and says so through
+  `notify-telegram.sh` once the streak starts. `--status` prints streak, log size
+  and last run.
+
 ## [0.1.7] - 2026-11-15
 
 ### Added
