@@ -77,8 +77,9 @@ delete them when you are sure (`multica agent delete`, `multica skill delete`).
 in order: python, the `multica` binary on `PATH`, `workspace_id` and
 `runtime_id`, that the stage model is pinned, that the stage **owners** were read
 from the catalog, that every stage's owning skill is loaded by the agent that
-handles that stage, that the skills are publicly importable, and that the CLI is
-authorized (`--offline` skips the last two).
+handles that stage, that every back-edge matches the transitions table, that the
+skills are publicly importable, and that the CLI is authorized (`--offline` skips
+the last two).
 
 The owner check is the one that catches real drift. `stage-catalog.json` says
 which skill each stage dispatches to; a column's agent must load that skill, or
@@ -92,3 +93,23 @@ edits upstream trip it:
 
 When it trips, change `config/columns.json` — never the pinned cache, and never
 the stage list, which is not this repo's to keep.
+
+## The back-edge check
+
+`transitions.md` declares, per stage, where a rejection or a rework sends the
+run. `doctor` reads it and compares the result with each column's `back_to`.
+This is the difference between a board that loops and a board that only moves
+forward:
+
+| rejected at | stelow sends it back to | column that must receive it |
+|---|---|---|
+| `gate` | `shape` | `framing` |
+| `int-gate` | `interface` | `design` |
+| `plan-gate` | `planning` | `tech` |
+| `diff-gate` | `execution` | `build` |
+| `audit` | `execution` | `build` |
+| `execution` (rework) | `shape` | `framing` |
+
+If a column's `back_to` lands one step early — pointing a rejected diff review at
+`verify` instead of `build` — the rework skips the re-execution and the loop is a
+forward move with extra steps. `doctor` reports it by name.

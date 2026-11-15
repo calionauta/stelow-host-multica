@@ -35,6 +35,7 @@ CACHE = ROOT / ".stelow-cache"
 LOCK = ROOT / "stelow.lock.json"
 STAGES_MEMBER = "skills/stelow-workflow-orchestrator/stages.yaml"
 CATALOG_MEMBER = "skills/stelow-workflow-orchestrator/stage-catalog.json"
+TRANSITIONS_MEMBER = "skills/stelow-workflow-orchestrator/references/transitions.md"
 
 
 def set_root(path: Path) -> None:
@@ -140,6 +141,10 @@ def load_groups(path: Path) -> list[dict]:
 # ------------------------------------------------------------- stelow stage model
 
 
+def sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def parse_intents(text: str) -> dict[str, list[str]]:
     """Parse `routes.intents` out of stages.yaml without a YAML dependency."""
     intents: dict[str, list[str]] = {}
@@ -167,10 +172,11 @@ def parse_intents(text: str) -> dict[str, list[str]]:
 
 
 def fetch_upstream(repo: str, ref: str) -> dict[str, str]:
-    """Download the tarball once and pull out the two files this host reads.
+    """Download the tarball once and pull out the files this host reads.
 
-    The catalog is generated upstream from stages.yaml. Reading both keeps the
-    host from parsing YAML for the stage -> skill ownership it must never guess.
+    The catalog and the transitions table are generated upstream from
+    stages.yaml. Reading all three keeps the host from guessing the stage ->
+    skill ownership or the back-edges it must reproduce.
     """
     url = f"https://codeload.github.com/{repo}/tar.gz/{ref}"
     try:
@@ -178,7 +184,7 @@ def fetch_upstream(repo: str, ref: str) -> dict[str, str]:
             blob = resp.read()
     except OSError as exc:
         raise Fail(f"could not download {repo}@{ref}: {exc}")
-    members = {"stages": STAGES_MEMBER, "catalog": CATALOG_MEMBER}
+    members = {"stages": STAGES_MEMBER, "catalog": CATALOG_MEMBER, "transitions": TRANSITIONS_MEMBER}
     out: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
@@ -214,16 +220,52 @@ def parse_owners(text: str) -> dict[str, str]:
     return owners
 
 
+def parse_transitions(text: str) -> dict[str, dict[str, list[str]]]:
+    """stage -> {next, reject, rework} targets, from the generated mirror.
+
+    A value carries prose after its target list, so each part is cut to its
+    leading word; callers drop anything that is not a declared stage.
+    """
+    edges: dict[str, dict[str, list[str]]] = {}
+    stage = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### "):
+            stage = stripped[4:].strip()
+            edges[stage] = {"next": [], "reject": [], "rework": []}
+            continue
+        if stripped.startswith("## "):
+            stage = None
+            continue
+        if stage is None or ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        if key not in ("next", "reject", "rework"):
+            continue
+        for part in value.split(","):
+            word = part.strip().split(" ")[0].split("(")[0].strip()
+            cleaned = word.replace("-", "").replace("_", "")
+            if not (cleaned and cleaned.isalnum() and word[0].isalpha()):
+                break  # the prose tail starts here; nothing after it is a target
+            if word in ("none", "blocked", "requires"):
+                break
+            edges[stage][key].append(word)
+    return {k: v for k, v in edges.items() if v["next"] or v["reject"] or v["rework"]}
+
+
 def ensure_stages(host: dict, force: bool = False) -> dict:
-    """Return {intents, owners, sha, ref} from a pinned copy of the stage model."""
+    """Return {intents, owners, rejects, sha, ref} from a pinned stage model."""
     repo = host["stelow"]["repo"]
     ref = host["stelow"]["ref"]
     stages_path = CACHE / "stages.yaml"
     catalog_path = CACHE / "stage-catalog.json"
+    transitions_path = CACHE / "transitions.md"
     lock = read_json(LOCK, "stelow.lock.json") if LOCK.exists() else {}
     cached = (
         stages_path.exists()
         and catalog_path.exists()
+        and transitions_path.exists()
         and not force
         and lock.get("ref") == ref
         and lock.get("repo") == repo
@@ -231,34 +273,42 @@ def ensure_stages(host: dict, force: bool = False) -> dict:
     if cached:
         stages_text = stages_path.read_text(encoding="utf-8")
         catalog_text = catalog_path.read_text(encoding="utf-8")
-        if hashlib.sha256(stages_text.encode()).hexdigest() == lock.get("stages_sha256") and (
-            hashlib.sha256(catalog_text.encode()).hexdigest() == lock.get("catalog_sha256")
+        transitions_text = transitions_path.read_text(encoding="utf-8")
+        if (
+            sha256(stages_text) == lock.get("stages_sha256")
+            and sha256(catalog_text) == lock.get("catalog_sha256")
+            and sha256(transitions_text) == lock.get("transitions_sha256")
         ):
             return {
                 "intents": parse_intents(stages_text),
                 "owners": parse_owners(catalog_text),
+                "rejects": parse_transitions(transitions_text),
                 "sha": lock["stages_sha256"],
                 "ref": ref,
             }
     fetched = fetch_upstream(repo, ref)
     stages_text, catalog_text = fetched["stages"], fetched["catalog"]
+    transitions_text = fetched["transitions"]
     CACHE.mkdir(exist_ok=True)
     stages_path.write_text(stages_text, encoding="utf-8")
     catalog_path.write_text(catalog_text, encoding="utf-8")
-    sha = hashlib.sha256(stages_text.encode()).hexdigest()
+    transitions_path.write_text(transitions_text, encoding="utf-8")
+    sha = sha256(stages_text)
     write_json(
         LOCK,
         {
             "repo": repo,
             "ref": ref,
             "stages_sha256": sha,
-            "catalog_sha256": hashlib.sha256(catalog_text.encode()).hexdigest(),
+            "catalog_sha256": sha256(catalog_text),
+            "transitions_sha256": sha256(transitions_text),
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
     )
     return {
         "intents": parse_intents(stages_text),
         "owners": parse_owners(catalog_text),
+        "rejects": parse_transitions(transitions_text),
         "sha": sha,
         "ref": ref,
     }
@@ -605,6 +655,50 @@ def owner_gaps(plan: dict, owners: dict[str, str]) -> list[str]:
     return gaps
 
 
+def flow_gaps(plan: dict, edges: dict[str, dict[str, list[str]]], universe: dict[str, str]) -> list[str]:
+    """The board's back-edges must be the ones stelow declares.
+
+    A gate that rejects sends the run back to a named stage. If the column that
+    receives it does not hold that stage, the rework lands on a handler the
+    methodology did not expect, and the loop the workflow promises silently
+    becomes a forward move. A non-gate column's back edge is checked against the
+    stage's rework/reject targets rather than assumed.
+    """
+    gaps: list[str] = []
+    order = {col["id"]: index for index, col in enumerate(plan["columns"])}
+    for col in plan["columns"]:
+        back = col.get("back_to") or ""
+        declared: dict[str, list[str]] = {}
+        for stage in col["stages"]:
+            stage_edges = edges.get(stage) or {}
+            for target in stage_edges.get("next", []):
+                where = universe.get(target)
+                if where is None:
+                    gaps.append(f"{stage}: stelow advances to unknown stage {target!r}")
+                elif where in order and order[where] < order.get(col["id"], 0):
+                    gaps.append(f"{stage}: stelow advances to {target} in the earlier column {where}")
+            for field in ("reject", "rework"):
+                for target in stage_edges.get(field, []):
+                    where = universe.get(target)
+                    if where is None:
+                        gaps.append(f"{stage}: stelow sends work back to unknown stage {target!r}")
+                    else:
+                        declared.setdefault(where, []).append(f"{target} ({field} of {stage})")
+        if col["gate"] and declared:
+            for where, why in declared.items():
+                if back != where:
+                    gaps.append(
+                        f"{col['id']}: {', '.join(why)} lives in column {where},"
+                        f" but back_to is {back!r}"
+                    )
+        elif back and declared and back not in declared:
+            gaps.append(
+                f"{col['id']}: back_to is {back!r}, but stelow sends this column back to "
+                + ", ".join(sorted(declared))
+            )
+    return gaps
+
+
 def cmd_doctor(host: dict, args, groups, lock) -> int:
     checks: list[tuple[str, bool, str]] = []
 
@@ -632,6 +726,10 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
     plan = build_plan(host, groups, lock["intents"], args.intent, args.gates, args.project)
     gaps = owner_gaps(plan, owners)
     check("stage owners loaded by their agent", not gaps, "; ".join(gaps[:3]))
+
+    # 6. the back-edges reproduce the transitions table
+    flows = flow_gaps(plan, lock.get("rejects") or {}, stage_universe(groups))
+    check("gate back-edges match transitions", not flows, "; ".join(flows[:3]))
 
     # 6. the upstream skills are publicly importable
     repo = host["stelow"]["repo"]

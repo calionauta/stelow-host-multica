@@ -37,7 +37,7 @@ slugify from the column label, or updates diverge from creation forever).
 
 ```bash
 # fill multica.workspace_id, multica.runtime_id and (optionally) multica.project_id
-./bin/stelow-host sync                     # pin stages.yaml + stage-catalog.json
+./bin/stelow-host sync                     # pin stages.yaml + catalog + transitions
 ./bin/stelow-host doctor                   # environment, pin, and stage ownership
 ./bin/stelow-host plan --intent feature    # what would change; writes nothing
 ./bin/stelow-host apply --intent feature   # converge
@@ -49,9 +49,11 @@ imported once and then refreshed from source (`--refresh-skills`); agents and th
 workflow are updated in place, never duplicated.
 
 `doctor` is the check to run first: it verifies python, the `multica` binary,
-the workspace ids, the pin, that the skills are publicly importable, and — the
-one that matters — that **every stage's owning skill is loaded by the agent that
-handles that stage**. `--offline` skips the network and live-workspace checks.
+the workspace ids, the pin, that the skills are publicly importable, and the two
+that matter: **every stage's owning skill is loaded by the agent that handles
+that stage**, and **every back-edge points at the column stelow actually sends
+the run back to** (a rejected diff review returns to execution, not to
+verification). `--offline` skips the network and live-workspace checks.
 
 ## The mapping
 

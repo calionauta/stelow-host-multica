@@ -149,7 +149,7 @@
         "diff-gate"
       ],
       "gate": true,
-      "back_to": "verify"
+      "back_to": "build"
     },
     {
       "id": "audit",
@@ -159,7 +159,7 @@
         "audit"
       ],
       "agent": "audit",
-      "back_to": "verify",
+      "back_to": "build",
       "skills": [
         "stelow-workflow-execution-critique"
       ]

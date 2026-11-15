@@ -74,8 +74,9 @@ that adds a stage cannot silently fall through:
 
 ## The catalog is read, not copied
 
-`sync` pins two files: `stages.yaml` (routes and intents) and the generated
-`stage-catalog.json` (which skill owns each stage). The second one is what makes
+`sync` pins three files: `stages.yaml` (routes and intents), the generated
+`stage-catalog.json` (which skill owns each stage), and the generated
+`references/transitions.md` (where each stage sends the run on reject or rework). The second one is what makes
 the *ownership* check possible: `doctor` asserts that the agent handling a stage
 loads that stage's skill, so a stelow release that repoints a stage fails loudly
 here instead of silently dispatching the stage to an agent that never read it.

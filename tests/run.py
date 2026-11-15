@@ -66,6 +66,24 @@ STAGE_CATALOG = {
 }
 
 
+def transitions_md(intents=INTENTS):
+    """The mirror upstream generates: a forward chain plus the four gate rejects."""
+    edges = {}
+    for route in intents.values():
+        for earlier, later in zip(route, route[1:]):
+            edges.setdefault(earlier, {"next": [], "reject": []})["next"].append(later)
+    for gate, target in (("gate", "shape"), ("int-gate", "interface"),
+                         ("plan-gate", "planning"), ("diff-gate", "execution")):
+        edges.setdefault(gate, {"next": [], "reject": []})["reject"].append(target)
+    lines = []
+    for stage, rows in edges.items():
+        lines += ["### " + stage, "", "```",
+                  "next:      " + (", ".join(rows["next"]) or "(none)"),
+                  "reject:    " + (", ".join(rows["reject"]) or "(none)"),
+                  "```", ""]
+    return "\n".join(lines)
+
+
 def stages_yaml(intents=INTENTS):
     lines = ["version: 2", "routes:", "  intents:"]
     for name, stages in intents.items():
@@ -218,14 +236,17 @@ class HostCase(unittest.TestCase):
     def write_stages(self, intents=INTENTS, catalog=STAGE_CATALOG):
         text = stages_yaml(intents)
         cat_text = json.dumps(catalog)
+        tr_text = transitions_md()
         cache = self.tmp / ".stelow-cache"
         (cache / "stages.yaml").write_text(text, encoding="utf-8")
         (cache / "stage-catalog.json").write_text(cat_text, encoding="utf-8")
+        (cache / "transitions.md").write_text(tr_text, encoding="utf-8")
         (self.tmp / "stelow.lock.json").write_text(json.dumps({
             "repo": self.host_repo(),
             "ref": self.host_ref(),
             "stages_sha256": hashlib.sha256(text.encode()).hexdigest(),
             "catalog_sha256": hashlib.sha256(cat_text.encode()).hexdigest(),
+            "transitions_sha256": hashlib.sha256(tr_text.encode()).hexdigest(),
             "owners": {s["id"]: s["skill"] for s in catalog["stages"] if s.get("skill")},
         }), encoding="utf-8")
 
@@ -443,6 +464,32 @@ class TestRedProof(HostCase):
         gaps = HOST.owner_gaps(plan, owners)
         self.assertEqual(len(gaps), 1, gaps)
         self.assertIn("gatekeeper", gaps[0])
+
+
+class TestFlowBackEdges(HostCase):
+    def test_a_back_edge_that_skips_the_owning_column_is_reported(self):
+        """A rejected diff review must land on execution. Pointing it at verify
+        skips the re-execution and turns the promised loop into a forward move."""
+        plan = HOST.build_plan(self.host, self.groups, self.lock["intents"], "feature", "human", "")
+        edges = HOST.parse_transitions(transitions_md())
+        universe = HOST.stage_universe(self.groups)
+        self.assertEqual(HOST.flow_gaps(plan, edges, universe), [])
+        for col in plan["columns"]:
+            if col["id"] == "diff_gate":
+                col["back_to"] = "verify"
+        gaps = HOST.flow_gaps(plan, edges, universe)
+        self.assertEqual(len(gaps), 1, gaps)
+        self.assertIn("diff-gate", gaps[0])
+
+    def test_transitions_parser_stops_at_the_target_list(self):
+        """Real lines carry prose after the targets; reading it as a stage name
+        would invent edges that do not exist."""
+        text = ("### gate\n\n```\nnext:      scope, execution\nreject:    shape\n```\n\n"
+                "### context\n\n```\nreject:    context:5 - a gate id, not a stage\n```\n")
+        edges = HOST.parse_transitions(text)
+        self.assertEqual(edges["gate"]["reject"], ["shape"])
+        self.assertEqual(edges["gate"]["next"], ["scope", "execution"])
+        self.assertNotIn("context", edges, "a gate id is not a stage and must not survive parsing")
 
 
 class TestVerify(HostCase):
