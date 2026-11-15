@@ -4,6 +4,25 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.6.0] - 2026-11-15
+
+### Fixed
+
+- **A human gate now assigns the card to the person it belongs to.** The step handler
+  was `project_lead`, and the tracker's `project_lead` assigns nobody: a probe card
+  moved into `diff_gate` came out with `assignee: null`, so CAL-57 sat at the gate
+  twice with no owner and no notification. Gates now hand off to a **member**
+  (`MULTICA_MEMBER_ID` / `human.member_id`), which the API does assign. `creator` is
+  not a valid handler — the CLI help lists it, the API rejects it — so a card opened
+  by an agent still needs `park`.
+- `build_steps` refuses to build a human gate without a member: a gate with nobody to
+  hand it to is the bug, not a configuration.
+
+### Added
+
+- `doctor` gained **"every gate names the person who owns it"**, and `--fix` re-points
+  a drifted gate with `workflow handoff set`, preserving its next/back/instructions.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added

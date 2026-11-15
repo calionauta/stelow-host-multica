@@ -245,8 +245,8 @@ class FakeMultica:
             return 0, json.dumps({"ok": True}), ""
         raise AssertionError("unexpected command: %s" % args)
 
-    def json(self, args, can_fail=False):
-        code, out, err = self.run(args, can_fail=can_fail)
+    def json(self, args):
+        code, out, err = self.run(args)
         if code != 0:
             raise HOST.Fail("fake: %s" % err, code=1)
         return json.loads(out)
@@ -305,6 +305,9 @@ class HostCase(unittest.TestCase):
         factory.fake = self.fake
         HOST.Multica = factory
         self.host = HOST.load_host(self.tmp / "config" / "host.json")
+        # A human gate has to name the person it belongs to; the tests carry one so
+        # the gate path is exercised the way a configured workspace runs it.
+        self.host.setdefault("human", {})["member_id"] = "member-1"
         self.host["multica"]["runtime_id"] = "rt-test"
         self.host["multica"]["workspace_id"] = "ws-test"
         self.groups = HOST.load_groups(self.tmp / "config" / "columns.json")
@@ -467,12 +470,14 @@ class TestApply(HostCase):
         self.assertFalse([c for c in second if "create" in c], "second apply created something: %s" % second)
         self.assertTrue([c for c in second if "update" in c])
 
-    def test_human_gates_hand_the_step_to_the_project_lead(self):
-        """A human gate that silently runs an agent is the worst possible failure."""
+    def test_human_gates_hand_the_step_to_whoever_asked(self):
+        """A human gate that silently runs an agent is the worst possible failure,
+        and a role is not a person: with `project_lead` the card entered the gate
+        still assigned to the agent that moved it, so nothing told the asker."""
         self.apply(gates="human")
         steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow"]}
         for gate in ("product_gate", "interface_gate", "tech_gate", "diff_gate"):
-            self.assertEqual(steps[gate]["handler"]["type"], "project_lead", gate)
+            self.assertEqual(steps[gate]["handler"], {"type": "member", "id": "member-1"}, gate)
 
     def test_agent_gates_hand_the_step_to_the_reviewer(self):
         """Without this the --gates agent mode would leave gates to a stage agent."""
@@ -576,6 +581,32 @@ class TestBoardNames(HostCase):
         updates = [c for c in fake.calls if c[:2] == ["issue-status", "update"]]
         self.assertEqual(len(updates), 1)
         self.assertIn("Your call · product", updates[0])
+
+
+class TestGateOwnership(HostCase):
+    def test_a_gate_handed_to_a_role_is_reported(self):
+        # Catches: the workflow that left CAL-57 in `diff_gate` twice with no owner.
+        # `project_lead` passes the API and assigns nobody, so the card waits unseen.
+        steps = [
+            {"status_key": "build", "handler": {"type": "agent", "id": "a1"}},
+            {"status_key": "diff_gate", "handler": {"type": "project_lead"}},
+            {"status_key": "product_gate", "handler": {"type": "member", "id": "member-1"}},
+        ]
+        self.assertEqual(HOST.gate_drift(steps, "member-1"), ["diff_gate"])
+
+    def test_a_gate_naming_another_member_is_reported(self):
+        steps = [{"status_key": "tech_gate", "handler": {"type": "member", "id": "someone-else"}}]
+        self.assertEqual(HOST.gate_drift(steps, "member-1"), ["tech_gate"])
+
+    def test_a_gate_that_names_its_member_is_clean(self):
+        steps = [{"status_key": "diff_gate", "handler": {"type": "member", "id": "member-1"}}]
+        self.assertEqual(HOST.gate_drift(steps, "member-1"), [])
+
+    def test_building_a_human_gate_without_a_member_fails(self):
+        """A gate nobody owns is the bug itself, so it must not be built at all."""
+        self.host["human"]["member_id"] = ""
+        with self.assertRaises(HOST.Fail):
+            HOST.human_member(self.host)
 
 
 class TestRedProof(HostCase):
@@ -1510,6 +1541,7 @@ class TestPark(HostCase):
         # Catches: a park that reports success and leaves the card on an agent.
         self.fake.state["issues"] = {"i1": {"id": "i1", "key": "CAL-57", "status": "diff_gate",
                                             "creator_id": "a-1", "creator_type": "agent"}}
+        self.host["human"]["member_id"] = ""
         code = HOST.cmd_park(self.host, types.SimpleNamespace(issue="i1", why="", wake=""), )
         self.assertEqual(code, 1)
 

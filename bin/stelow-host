@@ -105,6 +105,9 @@ def load_host(path: Path) -> dict:
         value = str(os.environ.get(var) or "").strip()
         if value:
             cfg["multica"][key] = value
+    member = str(os.environ.get("MULTICA_MEMBER_ID") or "").strip()
+    if member:
+        cfg.setdefault("human", {})["member_id"] = member
     return cfg
 
 
@@ -778,6 +781,23 @@ def build_plan(host: dict, groups: list[dict], intents: dict[str, list[str]], in
     }
 
 
+def human_member(host: dict) -> str:
+    """The person a human gate belongs to.
+
+    The tracker can hand a status to an agent, a squad, a member or the project lead,
+    and only the member actually assigns the card: `project_lead` left CAL-57 with no
+    owner on two separate arrivals at `diff_gate`. A gate with nobody to hand it to is
+    a gate that waits invisibly, so this fails instead of building one.
+    """
+    member = str((host.get("human") or {}).get("member_id") or "").strip()
+    if not member:
+        raise Fail(
+            "gates are human but no member owns them: set human.member_id in config/host.json "
+            "(or MULTICA_MEMBER_ID), or pass --gates agent"
+        )
+    return member
+
+
 def build_steps(plan: dict, host: dict, agent_ids: dict[str, str], create: bool) -> list[dict]:
     columns = plan["columns"]
     steps: list[dict] = [{"status_key": "todo", "next_status_key": columns[0]["id"] if columns else "done"}]
@@ -793,7 +813,12 @@ def build_steps(plan: dict, host: dict, agent_ids: dict[str, str], create: bool)
             step["status_key"] = col["id"]
         if col["gate"]:
             if plan["gates"] == "human":
-                step["handler"] = {"type": "project_lead"}
+                # `project_lead` assigns nobody: a probe card moved into `diff_gate`
+                # came out with no assignee at all, which is exactly how CAL-57 waited
+                # twice with nobody told. The API takes an agent, a squad, a member or
+                # the project lead — "whoever asked" is not one of them — so the gate
+                # names a member, and `park` narrows it to the card's creator.
+                step["handler"] = {"type": "member", "id": human_member(host)}
             else:
                 step["handler"] = {"type": "agent", "id": agent_ids[agent_name(host, col["agent"])]}
         else:
@@ -833,7 +858,8 @@ def render_plan(plan: dict, host: dict, lock: dict, live_agents: dict[str, str],
         if col is None:
             lines.append(f"  {key:<16} —")
             continue
-        handler = "project_lead" if col["gate"] and plan["gates"] == "human" else agent_name(host, col["agent"])
+        handler = f"member {human_member(host)[:8]}" if col["gate"] and plan["gates"] == "human" \
+            else agent_name(host, col["agent"])
         gate = " · gate" if col["gate"] else ""
         nxt = chain[index + 1][0] if index + 1 < len(chain) else ""
         back = f"  back → {col['back_to']}" if col.get("back_to") else ""
@@ -1263,8 +1289,65 @@ def board_names(groups) -> dict[str, str]:
 
 
 def status_names(live) -> dict[str, str]:
-    rows = rows_of(live.json(["issue-status", "list"], can_fail=True) or [], "issue-status list")
+    """The workspace's status names, or none if the catalog cannot be read.
+
+    An unreadable catalog must not fail the whole doctor: the checks that depend on
+    it then report the drift they cannot rule out, which is the honest answer.
+    """
+    try:
+        rows = rows_of(live.json(["issue-status", "list"]), "issue-status list")
+    except Fail:
+        return {}
     return {str(r.get("key") or ""): str(r.get("name") or "") for r in rows}
+
+
+def gate_drift(steps: list[dict], want: str) -> list[str]:
+    """Human gates that do not name their member.
+
+    A gate handed to `project_lead` assigns nobody — a probe card moved into
+    `diff_gate` came out with no assignee at all — so the card sits in a column that
+    says "your call" and no person is told. `want` is the member who owns them.
+    """
+    drift = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        key = str(step.get("status_key") or "")
+        if not key.endswith("_gate"):
+            continue
+        handler = step.get("handler") or {}
+        if handler.get("type") != "member" or str(handler.get("id") or "") != want:
+            drift.append(key)
+    return drift
+
+
+def own_gates(live, plan: dict, host: dict, steps: list[dict]) -> list[str]:
+    """Point each drifted gate at its member, keeping what the step already says."""
+    want = human_member(host)
+    fixed = []
+    for key in gate_drift(steps, want):
+        step = next((s for s in steps if str(s.get("status_key")) == key), {})
+        path = ROOT / ".stelow-cache" / f"gate-{key}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(step.get("instructions") or ""), encoding="utf-8")
+        cmd = ["workflow", "handoff", "set", plan["workflow"], key,
+               "--handler", want, "--instructions-file", str(path)]
+        if step.get("next_status_key"):
+            cmd += ["--next", str(step["next_status_key"])]
+        if step.get("back_status_key"):
+            cmd += ["--back", str(step["back_status_key"])]
+        if live.run(cmd, can_fail=True) == 0:
+            fixed.append(key)
+    return fixed
+
+
+def live_steps(live, workflow: str) -> list[dict]:
+    try:
+        data = live.json(["workflow", "get", workflow])
+    except Fail:
+        return []
+    steps = data.get("steps") if isinstance(data, dict) else None
+    return [s for s in (steps or []) if isinstance(s, dict)]
 
 
 def decorate_statuses(live, groups) -> list[str]:
@@ -1574,6 +1657,16 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             # with nobody waiting reads as a warning that is not there.
             check("no gate card waits unmarked", not unmarked,
                   "waiting on a person: " + ", ".join(unmarked[:4]) if unmarked else "")
+            chain = next((p for p in plans if p.get("gates") == "human"), None)
+            if chain:
+                try:
+                    want = human_member(host)
+                except Fail:
+                    want = ""
+                drifted = gate_drift(live_steps(live, chain["workflow"]), want) if want else []
+                check("every gate names the person who owns it", not drifted,
+                      "handed to a role, so nobody is assigned: " + ", ".join(drifted[:4])
+                      if drifted else "")
             named = status_names(live)
             unnamed = [key for key, name in board_names(groups).items() if named.get(key) != name]
             check("gate columns say who acts", not unnamed,
@@ -1613,6 +1706,8 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                 gates_now = gate_ids(groups) | loose_gate_ids()
                 restart_after = f"{int(float(load_policy().get('stall_minutes', 5)))}m"
                 decorate_statuses(live, groups)
+                if chain:
+                    own_gates(live, chain, host, live_steps(live, chain["workflow"]))
                 marked = restarted = 0
                 for key in park:
                     issue_id = str((by_key.get(key) or {}).get("id") or "")
