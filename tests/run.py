@@ -674,7 +674,9 @@ class TestPromptContracts(HostCase):
     def test_the_adapter_teaches_how_to_look(self):
         adapter = (REPO / "agents" / "_adapter.md").read_text()
         for rule in ("Looking costs a turn", "read tool", "Batch independent commands",
-                     "Ask the issue once", "Do not re-derive"):
+                     "Ask the issue once", "Do not re-derive",
+                     "One script, not ten commands", "print only the answer",
+                     "Start from the handoff, not the repository"):
             self.assertIn(rule, adapter)
 
     def test_every_live_agent_carries_that_rule(self):
@@ -686,6 +688,10 @@ class TestPromptContracts(HostCase):
         self.assertEqual(len(bodies), 3)
         for body in bodies:
             self.assertIn("Looking costs a turn", body)
+            # The two cost rules that follow from the same measurement: a chain of
+            # calls as one script, and the previous stage's artifacts as the opening.
+            self.assertIn("One script, not ten commands", body)
+            self.assertIn("Start from the handoff", body)
 
     def test_audit_is_scoped_to_the_diff_and_its_rows(self):
         """CAL-52 spent four audit runs (~12M tokens) re-deriving the repository."""

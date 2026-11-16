@@ -116,6 +116,37 @@ not expensive to think about; it was expensive to look at.
 - **Do not re-derive what an artifact already cites.** Open a file to check a
   claim, not to re-read the repository around it.
 
+## One script, not ten commands
+
+A chain of small calls is the most expensive shape there is: each round trip
+re-sends the conversation, and every result stays in it. A measured build run made
+601 shell calls and carried every one of their outputs to the end. Write the chain
+as one script instead, and print only the answer you decided on:
+
+```
+cat > .stelow-probe.sh <<'EOF'
+set -e
+grep -c "add(" scripts/stelow
+sed -n '1050,1075p' scripts/stelow
+EOF
+bash .stelow-probe.sh
+```
+
+One call in, one screen out — and what the script read never enters your context,
+which is the part that matters on a long card. Long suites are the same argument
+from the other side: start them once, in the background (`timeout 900 npm test &
+echo $!`), keep working, and read the tail when you need the verdict.
+
+## Start from the handoff, not the repository
+
+Reopening a repository to find out where you are costs more than the stage itself:
+a fitted line over 43 measured runs says **about 1.2M tokens are spent before a
+run does anything**, and most of that is re-deriving context the previous stage
+already had. Begin with the block the previous stage left — its artifact paths,
+the decisions, what is still open — and open a file only to check a line you are
+about to act on. The chain's own artifacts are the handoff; a comment thread is
+not, and neither is your memory of the last run.
+
 ## No command outlives your turn
 
 Cap anything that can run long: `timeout 300 <cmd>`. A test suite, a build or a

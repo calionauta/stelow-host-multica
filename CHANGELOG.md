@@ -4,6 +4,23 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.10.0] - 2026-11-15
+
+### Added
+
+- **`agents/_adapter.md`: one script instead of ten commands.** A chain of small
+  calls is the expensive shape — every round trip re-sends the conversation and
+  every result stays in it (601 shell calls in one measured run). The rule writes the
+  chain as a script that prints only the decision, and moves long suites to the
+  background.
+- **Start from the handoff, not the repository.** A fitted line over 43 measured runs
+  puts the fixed cost of a run at about **1.2M tokens** before it does anything, and
+  most of that is re-deriving context the previous stage already had. The rule opens a
+  stage with the previous stage's artifacts and reads a file only to check a line.
+
+Both rules are pinned by the prompt-contract tests, which fail when a rule stops
+reaching an agent.
+
 ## [0.9.0] - 2026-11-15
 
 ### Fixed
