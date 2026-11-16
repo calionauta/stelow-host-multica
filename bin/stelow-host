@@ -683,6 +683,10 @@ def install_plans(host: dict, args, groups: list[dict], lock: dict) -> list[dict
                 raise Fail(f"{workflow['board']} board would not survive a real card: " + "; ".join(problems))
             plan = board_plan(host, board)
             plan["workflow"] = workflow["id"]
+            # Record which board this plan came from: without it a loose plan looks
+            # like the chain to anything that asks for its gate columns, and its
+            # gates were checked against the chain's keys — a check that never ran.
+            plan["board"] = workflow["board"]
             plan["project"] = workflow.get("project") or board.get("project") or ""
         plan["_workflow"] = workflow
         plans.append(plan)
@@ -1349,7 +1353,23 @@ def pick_member(rows: list[dict], wants: str) -> dict:
     raise Fail(f"no member matches {wants!r}: run `stelow-host human` to list them")
 
 
-def gate_drift(steps: list[dict], want: str) -> list[str]:
+def plan_gate_keys(plan: dict, groups: list[dict]) -> set[str]:
+    """The status keys this plan uses for gates, chain or loose board.
+
+    A loose board prefixes its columns with its own name (`explore-review`), so a
+    suffix test on `_gate` silently skipped both loose workflows — which is how
+    explore and research kept handing their review column to `project_lead` and
+    assigning nobody.
+    """
+    board = plan.get("board")
+    if not board:
+        return gate_ids(groups)
+    # A workflow namespaces its own statuses, so the live key is the bare column id
+    # (`review`), not the board-qualified one the board registry uses.
+    return {str(column["id"]) for column in load_board(board)["columns"] if column.get("gate")}
+
+
+def gate_drift(steps: list[dict], want: str, gates: set[str] | None = None) -> list[str]:
     """Human gates that do not name their member.
 
     A gate handed to `project_lead` assigns nobody — a probe card moved into
@@ -1361,7 +1381,9 @@ def gate_drift(steps: list[dict], want: str) -> list[str]:
         if not isinstance(step, dict):
             continue
         key = str(step.get("status_key") or "")
-        if not key.endswith("_gate"):
+        # The chain names its gates `*_gate`; a loose board names them
+        # `<board>-<column>`, so the caller passes the keys it cares about.
+        if (key not in gates) if gates is not None else (not key.endswith("_gate")):
             continue
         handler = step.get("handler") or {}
         if handler.get("type") != "member" or str(handler.get("id") or "") != want:
@@ -1369,11 +1391,12 @@ def gate_drift(steps: list[dict], want: str) -> list[str]:
     return drift
 
 
-def own_gates(live, plan: dict, host: dict, steps: list[dict]) -> list[str]:
+def own_gates(live, plan: dict, host: dict, steps: list[dict],
+              gates: set[str] | None = None) -> list[str]:
     """Point each drifted gate at its member, keeping what the step already says."""
     want = human_member(host)
     fixed = []
-    for key in gate_drift(steps, want):
+    for key in gate_drift(steps, want, gates):
         step = next((s for s in steps if str(s.get("status_key")) == key), {})
         path = ROOT / ".stelow-cache" / f"gate-{key}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1644,6 +1667,7 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
     # 5. skill ownership lines up with the columns
     plans = install_plans(host, args, groups, lock)
     plan = plans[0]
+
     all_skills = list(dict.fromkeys(skill for entry in plans for skill in entry["skills"]))
     gaps = owner_gaps(plan, owners)
     check("every planned stage has an owner", not gaps, "; ".join(gaps[:3]))
@@ -1734,8 +1758,12 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             # with nobody waiting reads as a warning that is not there.
             check("no gate card waits unmarked", not unmarked,
                   "waiting on a person: " + ", ".join(unmarked[:4]) if unmarked else "")
-            chain = next((p for p in plans if p.get("gates") == "human"), None)
-            if chain:
+            # Every workflow that has a gate, not just the chain: explore and
+            # research were left on `project_lead` — the handler that assigns
+            # nobody — because `board_plan` carries no `gates` key to filter on.
+            gated = [(p, plan_gate_keys(p, groups)) for p in plans
+                     if plan_gate_keys(p, groups) and p.get("gates") != "agent"]
+            if gated:
                 try:
                     want = human_member(host)
                 except Fail:
@@ -1746,7 +1774,10 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
                       (f"{want} is not a member here — pick one with `stelow-host human <name>`"
                        if want else "no member owns the gates: run `stelow-host human <name>`")
                       if not owns else "")
-                drifted = gate_drift(live_steps(live, chain["workflow"]), want) if want else []
+                drifted = []
+                for plan, keys in gated:
+                    drifted += [f"{plan['workflow']}:{key}"
+                                for key in gate_drift(live_steps(live, plan["workflow"]), want, keys)]
                 check("every gate names the person who owns it", not drifted,
                       "handed to a role, so nobody is assigned: " + ", ".join(drifted[:4])
                       if drifted else "")
@@ -1786,11 +1817,15 @@ def cmd_doctor(host: dict, args, groups, lock) -> int:
             park += [key for key in stale_idle if key not in park]
             if getattr(args, "fix", False):
                 by_key = {issue.get("key"): issue for issue in issues}
-                gates_now = gate_ids(groups) | loose_gate_ids()
+                gates_now = set()
+                for plan in plans:
+                    gates_now |= plan_gate_keys(plan, groups)
                 restart_after = f"{int(float(load_policy().get('stall_minutes', 5)))}m"
                 decorate_statuses(live, groups)
-                if chain:
-                    own_gates(live, chain, host, live_steps(live, chain["workflow"]))
+                for plan in (p for p in plans
+                             if plan_gate_keys(p, groups) and p.get("gates") != "agent"):
+                    own_gates(live, plan, host, live_steps(live, plan["workflow"]),
+                              plan_gate_keys(plan, groups))
                 marked = restarted = 0
                 for key in park:
                     issue_id = str((by_key.get(key) or {}).get("id") or "")

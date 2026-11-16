@@ -4,6 +4,19 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.9.0] - 2026-11-15
+
+### Fixed
+
+- **Explore and research gates were handed to a role.** `board_plan` carried no
+  `board` key and `doctor` only looked at the chain, so both loose workflows kept
+  `review` on `project_lead` — the handler proven to assign nobody — and every check
+  reported green because the keys it compared never matched. Plans now record their
+  board, `plan_gate_keys` answers per workflow, `doctor` covers every workflow with a
+  gate, and `--fix` re-points them.
+- `doctor --fix` walked the same short list and crashed on the chain-only branch;
+  it is looped over the gated workflows now.
+
 ## [0.8.0] - 2026-11-15
 
 ### Added

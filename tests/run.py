@@ -607,6 +607,22 @@ class TestGateOwnership(HostCase):
         steps = [{"status_key": "diff_gate", "handler": {"type": "member", "id": "member-1"}}]
         self.assertEqual(HOST.gate_drift(steps, "member-1"), [])
 
+    def test_a_loose_board_gate_is_checked_too(self):
+        """Explore and research prefix their columns (`explore-review`), so a suffix
+        test on `_gate` skipped both and left their review gate on `project_lead` —
+        the handler that assigns nobody."""
+        keys = HOST.plan_gate_keys({"workflow": "stelow-explore", "board": "explore"}, self.groups)
+        self.assertIn("review", keys)
+        self.assertNotIn("doing", keys)  # the working column is an agent's, not a gate
+        steps = [{"status_key": "review", "handler": {"type": "project_lead"}}]
+        self.assertEqual(HOST.gate_drift(steps, "member-1", keys), ["review"])
+
+    def test_the_chain_plan_checks_only_its_own_gates(self):
+        keys = HOST.plan_gate_keys({"workflow": "stelow"}, self.groups)
+        self.assertIn("diff_gate", keys)
+        self.assertNotIn("review", keys)
+
+
     def test_building_a_human_gate_without_a_member_fails(self):
         """A gate nobody owns is the bug itself, so it must not be built at all."""
         self.host["human"]["member_id"] = ""
