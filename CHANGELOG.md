@@ -4,6 +4,16 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.11.1] - 2026-11-16
+
+### Changed
+
+- **The economics section distinguishes hiding from deleting.** `codemode.mode:
+  "only"` hides the built-in tools and still lets a script call them (verified on
+  pi 1.5.2: `tools.bash` returns exit 0), which is what makes it a lever;
+  `defaultTools: ["-bash"]` deletes the shell from the session entirely and reads
+  like enforcement while removing the only execution path.
+
 ## [0.11.0] - 2026-11-15
 
 ### Added

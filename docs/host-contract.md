@@ -138,7 +138,10 @@ and the next move is a harness feature — not a longer paragraph.
 
 A host that can enforce it should. On pi, `codemode.mode: "only"` hides the
 built-in tools and makes the model reach them through scripts (the default
-`"on"` only appends a note to each description). The portable statement of that
+`"on"` only appends a note to each description). Hiding is not removal: verified
+on pi 1.5.2 under `"only"`, a script's `tools.bash` still returned exit 0 — which
+is why the setting is a lever and `defaultTools: ["-bash"]` is not (that one
+deletes the shell from the session; see `harness.md`). The portable statement of that
 requirement, and the MCP two-tool shape (`search_tools` + `execute`) for hosts
 that expose tools over MCP, are in stelow's
 `skills/stelow-workflow-orchestrator/references/cli-tools/harness.md`.
