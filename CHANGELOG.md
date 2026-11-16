@@ -4,6 +4,20 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.11.0] - 2026-11-15
+
+### Added
+
+- **`docs/host-contract.md`: the capability the five fields do not cover, and
+  what this host can actually offer.** Five fields say where state lives and who
+  owns a gate; none says what a run costs, and on this host that is the bigger
+  number — one real card spent 61.9M tokens across 11 runs, with 62% of its calls
+  inspection and 0.4% of its tokens as output. The section separates the three
+  economics capabilities (programmatic tool calling, tool-result pruning, gate
+  ownership), states plainly that this runtime can enforce only the third, and
+  says what follows when a convention fails to move the measurement: a harness
+  feature, not a longer paragraph.
+
 ## [0.10.0] - 2026-11-15
 
 ### Added

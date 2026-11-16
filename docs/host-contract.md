@@ -116,6 +116,33 @@ Five fields. Not an interface, not a lifecycle:
 `gate: unsupported` is legitimate and important: it tells stelow to fold the gate
 into the previous stage instead of pretending the review happened.
 
+## The capability this contract does not cover: execution economics
+
+Five fields say where state lives and who owns a gate. None of them says what a
+run costs, and on this host that is the bigger number: one real card spent 61.9M
+tokens across 11 runs, 62% of its calls were inspection, and 0.4% of its tokens
+were output. The methodology asked for economy in prose; prose lost. What a host
+can offer is the difference between asking and enforcing.
+
+| capability | what it needs | multica today |
+|---|---|---|
+| Programmatic tool calling — one script per probe, only its output returns | a sandbox and a `codemode`-style tool | **no.** The runtime is `agy` with one tool per turn, and the adapter cannot add tools |
+| Tool-result pruning — drop stale results so a re-read costs nothing | context editing or result masking | **partial.** Compaction exists; nothing drops a superseded `read` |
+| Gate ownership — a gate names a workspace member, never a role | member ids resolvable at write time | **yes**, and `stelow-host human <name>` writes one; `doctor` fails when a gate names anything else |
+
+So on this host programmatic tool calling is a *convention with a measurement*,
+not a guarantee: the adapter asks for one script per probe, and `multica issue
+runs <card> --output json` says whether it happened. If the next card's build run
+is still near 601 shell calls, the honest reading is that the convention is prose
+and the next move is a harness feature — not a longer paragraph.
+
+A host that can enforce it should. On pi, `codemode.mode: "only"` hides the
+built-in tools and makes the model reach them through scripts (the default
+`"on"` only appends a note to each description). The portable statement of that
+requirement, and the MCP two-tool shape (`search_tools` + `execute`) for hosts
+that expose tools over MCP, are in stelow's
+`skills/stelow-workflow-orchestrator/references/cli-tools/harness.md`.
+
 ## Named risk
 
 Every host repo will want to add "just one more thing the host can own". The
