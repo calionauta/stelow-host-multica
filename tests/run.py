@@ -646,6 +646,40 @@ class TestHumanOwner(HostCase):
         self.assertEqual(HOST.load_host(self.tmp / "config" / "host.json")["human"]["member_id"], "u-1")
 
 
+class TestPromptContracts(HostCase):
+    """The two rules whose absence is measurable in runs, not in taste.
+
+    CAL-52's build run made 601 shell calls — 123 `sed`, 104 `grep`, 33 `cat`,
+    125 `python3` one-liners — and wrote 0.4% of its tokens as output. The adapter
+    is the one text every agent reads, so the rule that cuts that has to live
+    there, has to reach the live agents, and has to fail the suite if removed.
+    """
+
+    def test_the_adapter_teaches_how_to_look(self):
+        adapter = (REPO / "agents" / "_adapter.md").read_text()
+        for rule in ("Looking costs a turn", "read tool", "Batch independent commands",
+                     "Ask the issue once", "Do not re-derive"):
+            self.assertIn(rule, adapter)
+
+    def test_every_live_agent_carries_that_rule(self):
+        """Wire it to the agents, not just to the file: a rule nobody receives is prose."""
+        self.apply()
+        bodies = [call[call.index("--instructions") + 1] for call in self.fp().calls
+                  if call[:2] in (["agent", "create"], ["agent", "update"])
+                  and "--instructions" in call]
+        self.assertEqual(len(bodies), 3)
+        for body in bodies:
+            self.assertIn("Looking costs a turn", body)
+
+    def test_audit_is_scoped_to_the_diff_and_its_rows(self):
+        """CAL-52 spent four audit runs (~12M tokens) re-deriving the repository."""
+        self.apply()
+        steps = {s["status_key"]: s for s in self.fp().state["workflows"]["stelow"]}
+        instructions = steps["audit"]["instructions"]
+        self.assertIn("not the repository", instructions)
+        self.assertIn("the diff and the spec rows", instructions)
+
+
 class TestRedProof(HostCase):
     def test_rows_refuses_an_ambiguous_payload(self):
         """Two lists in one payload: picking one blindly decides create-vs-update

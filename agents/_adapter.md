@@ -93,6 +93,29 @@ tests for the code it touched; `verify` runs the integration, layout, type and
 lint gates once, and reports one line per command with its result. If you re-run
 something, say which finding made you re-run it.
 
+## Looking costs a turn
+
+Every command you run is a turn that re-sends the whole conversation, so the
+cheapest work for a person is the most expensive for you: reading. A build run
+measured on CAL-52 made **601 shell calls** — 123 `sed`, 104 `grep`, 33 `cat`,
+125 `python3` one-liners — and its output was 0.4% of its tokens. That card was
+not expensive to think about; it was expensive to look at.
+
+- **Read a file with the read tool**, `offset`/`limit` for a range. `sed -n` and
+  `cat` are the same job in more turns and with line numbers you then have to
+  count by hand.
+- **Search with the search tools** — `ffgrep` with `context`, `ast_grep_search`
+  for structure — instead of `grep | sed | read`. One call answers "where" and
+  shows the lines around it.
+- **Ask the issue once.** `multica issue get <this issue> --output json` returns
+  status, assignee, labels and every attachment in one call. Keep the answer;
+  do not re-fetch it before each step to confirm what you already know.
+- **Batch independent commands into one shell call** when the answer fits on one
+  screen: `git status --porcelain; git diff --stat; npm test 2>&1 | tail -20` is
+  one turn, not three.
+- **Do not re-derive what an artifact already cites.** Open a file to check a
+  claim, not to re-read the repository around it.
+
 ## No command outlives your turn
 
 Cap anything that can run long: `timeout 300 <cmd>`. A test suite, a build or a

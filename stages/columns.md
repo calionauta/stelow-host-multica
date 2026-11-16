@@ -103,7 +103,10 @@ conditions and any nit carried forward, then finish or send it back to verify.
 ## audit
 
 Walk the proposal's requirements against what shipped, with evidence per
-requirement. If this is the **third** pass through build (two back-edges
+requirement — **the diff and the spec rows you are judging, not the repository
+around them.** Re-deriving what the artifacts already cite is how an audit pass
+costs more than the build it checks (CAL-52: four audit runs, ~12M tokens). Open
+a file only to check a row you are about to reject or sign off. If this is the **third** pass through build (two back-edges
 already spent), stop and park for a person with the rows that remain instead of
 opening another round: a fourth round is the loop deciding, not the reviewer. Cite the spec's ids; a requirement you cannot cite is a requirement
 nobody shipped. Attach `18-audit-table.md`, then finish the issue, or send it

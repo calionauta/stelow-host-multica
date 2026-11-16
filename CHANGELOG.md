@@ -4,6 +4,24 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.8.0] - 2026-11-15
+
+### Added
+
+- **`agents/_adapter.md` now teaches how to look.** A CAL-52 build run made 601
+  shell calls — 123 `sed`, 104 `grep`, 33 `cat`, 125 `python3` one-liners — and
+  emitted 0.4% of its tokens as output: the card was expensive to look at, not to
+  think about. Five rules (read tool with offsets, search tools instead of
+  `grep | sed | read`, ask the issue once, batch independent commands, do not
+  re-derive what an artifact already cites) now reach every agent, and a test
+  fails if a rule stops being prepended.
+
+### Changed
+
+- **`audit` is scoped to the diff and the spec rows it judges**, not the repository
+  around them. Four audit runs on CAL-52 cost about 12M tokens re-deriving what the
+  artifacts already cited; the scope rule and its test are in `stages/columns.md`.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added
