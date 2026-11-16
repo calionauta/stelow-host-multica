@@ -4,6 +4,18 @@ All notable changes to this repository are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 `0.x` versions while the host contract is still settling.
 
+## [0.11.2] - 2026-11-16
+
+### Changed
+
+- **The shell rule states the invariant, not the instrument.** A 2 000-call session
+  carrying a rule that prescribed a script tool showed 99% of calls already carrying
+  more than one command, and the prescribed tool used zero times in the last 85: the
+  rule was inert because the behaviour was already there. The adapter now says "one
+  call per question, one screen out" and leaves the shape to the runtime, plus
+  `set -o pipefail` — a pipeline ending in `| tail -2` reports the exit status of
+  `tail`, which is how this project once tagged a release from a red suite.
+
 ## [0.11.1] - 2026-11-16
 
 ### Changed

@@ -116,23 +116,27 @@ not expensive to think about; it was expensive to look at.
 - **Do not re-derive what an artifact already cites.** Open a file to check a
   claim, not to re-read the repository around it.
 
-## One script, not ten commands
+## One call, not ten commands
 
 A chain of small calls is the most expensive shape there is: each round trip
 re-sends the conversation, and every result stays in it. A measured build run made
-601 shell calls and carried every one of their outputs to the end. Write the chain
-as one script instead, and print only the answer you decided on:
+601 shell calls and carried every one of their outputs to the end.
+
+What matters is **calls per question**, not the wrapper. Over a 2 000-call session
+that carried a rule prescribing a script tool, 99% of the calls already carried more
+than one command (4.2 on average, 377 heredocs, 84 loops) and the prescribed tool was
+used **zero times in the last 85** — the rule was inert because the behaviour it
+wanted was already there. So write the invariant, whatever the shape:
 
 ```
-cat > .stelow-probe.sh <<'EOF'
-set -e
-grep -c "add(" scripts/stelow
-sed -n '1050,1075p' scripts/stelow
-EOF
-bash .stelow-probe.sh
+grep -c "add(" scripts/stelow; sed -n '1050,1075p' scripts/stelow
 ```
 
-One call in, one screen out — and what the script read never enters your context,
+Put `set -o pipefail` in front of a chain whose verdict you are going to trust: a
+pipeline ending in `| tail -2` reports the exit status of `tail`, which is how this
+project once tagged a release from a red suite.
+
+One call in, one screen out — and what the call read never enters your context,
 which is the part that matters on a long card. Long suites are the same argument
 from the other side: start them once, in the background (`timeout 900 npm test &
 echo $!`), keep working, and read the tail when you need the verdict.

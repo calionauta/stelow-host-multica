@@ -675,7 +675,7 @@ class TestPromptContracts(HostCase):
         adapter = (REPO / "agents" / "_adapter.md").read_text()
         for rule in ("Looking costs a turn", "read tool", "Batch independent commands",
                      "Ask the issue once", "Do not re-derive",
-                     "One script, not ten commands", "print only the answer",
+                     "One call, not ten commands", "one screen out",
                      "Start from the handoff, not the repository"):
             self.assertIn(rule, adapter)
 
@@ -688,9 +688,9 @@ class TestPromptContracts(HostCase):
         self.assertEqual(len(bodies), 3)
         for body in bodies:
             self.assertIn("Looking costs a turn", body)
-            # The two cost rules that follow from the same measurement: a chain of
-            # calls as one script, and the previous stage's artifacts as the opening.
-            self.assertIn("One script, not ten commands", body)
+            # The two cost rules that follow from the same measurement: one call per
+            # question whatever its shape, and the previous stage's artifacts as the opening.
+            self.assertIn("One call, not ten commands", body)
             self.assertIn("Start from the handoff", body)
 
     def test_audit_is_scoped_to_the_diff_and_its_rows(self):
